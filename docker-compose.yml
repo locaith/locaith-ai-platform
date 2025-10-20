@@ -1,0 +1,42 @@
+volumes:
+  locaith-data:
+
+services:
+  locaith-redis:
+    image: redis:7
+    container_name: locaith-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  locaith-postgres:
+    image: postgres:16
+    container_name: locaith-postgres
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - locaith-data:/var/lib/postgresql/data
+
+  # Locaith API server
+  # Uncomment to run the Locaith API server
+  # You will need to build the Docker image first: `docker build -t locaith-ai-platform -f Dockerfile .`
+  locaith-api:
+    image: locaith-ai-platform
+    container_name: locaith-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      locaith-redis:
+        condition: service_started
+      locaith-postgres:
+        condition: service_started
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
+      REDIS_URI: redis://locaith-redis:6379
+      POSTGRES_URI: postgres://postgres:postgres@locaith-postgres:5432/postgres?sslmode=disable
