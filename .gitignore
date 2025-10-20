@@ -34,7 +34,43 @@ Thumbs.db
 *.sw?
 
 # Optional backend venv (if created in root)
-#.venv/ 
+#.venv/
+
+# Locaith AI specific
+backend/.locaith_api/
+*.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# API Keys and secrets
+**/api_keys.json
+**/secrets.json
+**/.secrets/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# AI model cache
+models/
+*.model
+*.pkl
+*.joblib
+
+# Logs and monitoring
+logs/
+*.log
+monitoring/ 
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
