@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from google.genai import Client, types
 
-# Locaith AI client
+# Gemini client
 if os.getenv("GEMINI_API_KEY") is None:
     raise ValueError("GEMINI_API_KEY is not set")
 
@@ -49,7 +49,7 @@ def _extract_image_and_text(response: types.GenerateContentResponse):
 
 @router.post("/generate")
 def generate_image(payload: GenerateRequest):
-    """Generate an image from a descriptive prompt using Locaith AI Image."""
+    """Generate an image from a descriptive prompt using Gemini 2.5 Flash Image."""
     global _last_image_bytes, _last_mime_type
 
     prompt = payload.prompt.strip()

@@ -95,7 +95,7 @@ Instructions:
 - Structure your response with clear sections, bullet points, or numbered lists when appropriate.
 - Include background context, current trends, implications, and actionable insights.
 - Make your response significantly more detailed and informative than a basic summary.
-- Include the sources you used from the Summaries in the answer correctly, use markdown format (e.g. [apnews](https://locaithaisearch.cloud.locaith.com/id/1-0)). THIS IS A MUST.
+- Include the sources you used from the Summaries in the answer correctly, use markdown format (e.g. [apnews](https://vertexaisearch.cloud.google.com/id/1-0)). THIS IS A MUST.
 
 User Context:
 - {research_topic}

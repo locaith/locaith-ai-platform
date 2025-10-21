@@ -1,6 +1,6 @@
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ProcessedEvent } from "@/components/ActivityTimeline";
-import { Loader2, Activity, TextSearch, Search, Brain, Pen } from "lucide-react";
+import { Activity, TextSearch, Search, Brain, Pen } from "lucide-react";
 import React, { useMemo } from "react";
 
 interface OrchestratorIndicatorProps {

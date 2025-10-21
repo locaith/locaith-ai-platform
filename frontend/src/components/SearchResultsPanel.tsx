@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProcessedEvent } from "@/components/ActivityTimeline";
+import { safeCreateURL } from "@/lib/errorHandler";
 
 interface SearchResultsPanelProps {
   processedEvents: ProcessedEvent[];
@@ -14,9 +15,21 @@ function dedupeSources(sources: any[]): any[] {
   const out: any[] = [];
   for (const s of sources) {
     const url = s.url || s.link || s.source || s.href;
-    if (!url) continue;
+    if (!url || typeof url !== "string" || url.trim() === "") continue;
+    
     let hostname = "";
-    try { hostname = new URL(url).hostname; } catch { hostname = url; }
+    const trimmedUrl = url.trim();
+    if (trimmedUrl.length < 4) {
+      hostname = trimmedUrl;
+    } else {
+      const urlObj = safeCreateURL(trimmedUrl);
+      if (urlObj) {
+        hostname = urlObj.hostname;
+      } else {
+        console.warn('Invalid URL in dedupeSources:', url);
+        hostname = String(url).substring(0, 50); // Fallback to truncated string
+      }
+    }
     const key = hostname + "|" + (s.title || "") + "|" + (s.snippet || "");
     if (!seen.has(key)) {
       seen.add(key);
@@ -32,13 +45,27 @@ function extractSources(events: ProcessedEvent[]): any[] {
 }
 
 const safeHostname = (url: string): string => {
-  try {
-    if (!url || typeof url !== "string") return "";
-    if (/^https?:\/\//i.test(url)) return new URL(url).hostname;
-    return url;
-  } catch {
-    return url;
+  if (!url || typeof url !== "string" || url.trim() === "") return "";
+  
+  const trimmedUrl = url.trim();
+  
+  // Check if it's a valid HTTP/HTTPS URL
+  if (/^https?:\/\//i.test(trimmedUrl)) {
+    // Additional validation for URL length and basic structure
+    if (trimmedUrl.length < 8 || !trimmedUrl.includes('.')) {
+      return trimmedUrl;
+    }
+    
+    const urlObj = safeCreateURL(trimmedUrl);
+    if (urlObj) {
+      return urlObj.hostname;
+    } else {
+      console.warn('Invalid URL in safeHostname:', url);
+      return String(url || "").substring(0, 50);
+    }
   }
+  
+  return trimmedUrl;
 };
 
 const HostLink: React.FC<{ url: string; title?: string }> = ({ url, title }) => {
@@ -60,10 +87,20 @@ const SourcePreview: React.FC<{ url: string }> = ({ url }) => {
       setLoading(true);
       try {
         const base = import.meta.env.DEV ? "/api/preview" : "http://localhost:8123/api/preview";
+        
+        // Validate base URL and input URL
+        if (!base || typeof base !== "string" || base.trim() === "") {
+          throw new Error("Invalid base URL for preview");
+        }
+        if (!url || typeof url !== "string" || url.trim() === "") {
+          throw new Error("Invalid URL for preview");
+        }
+        
         const res = await fetch(`${base}?url=${encodeURIComponent(url)}`);
         const json = await res.json();
         if (mounted) setData(json);
       } catch (e) {
+        console.warn('Preview fetch error:', e);
         // silent fail
       } finally {
         if (mounted) setLoading(false);

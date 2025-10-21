@@ -37,7 +37,7 @@ load_dotenv()
 if os.getenv("GEMINI_API_KEY") is None:
     raise ValueError("GEMINI_API_KEY is not set")
 
-# Initialize the Locaith AI client
+# Used for Google Search API
 genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 

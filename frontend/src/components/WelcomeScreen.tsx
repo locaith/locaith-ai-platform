@@ -7,12 +7,21 @@ interface WelcomeScreenProps {
   ) => void;
   onCancel: () => void;
   isLoading: boolean;
+  onImageStart?: (imageData: { id: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  onImageGenerated?: (imageData: { id: string; dataUrl: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  // NEW: controlled input mode from App
+  mode?: "chat" | "image";
+  onModeChange?: (mode: "chat" | "image") => void;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   handleSubmit,
   onCancel,
   isLoading,
+  onImageStart,
+  onImageGenerated,
+  mode,
+  onModeChange,
 }) => (
   <div className="h-full flex flex-col items-center justify-center text-center px-4 flex-1 w-full max-w-3xl mx-auto gap-4">
     <div>
@@ -25,11 +34,15 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     </div>
     <div className="w-full mt-4">
       <InputForm
-        onSubmit={handleSubmit}
-        isLoading={isLoading}
-        onCancel={onCancel}
-        hasHistory={false}
-      />
+          onSubmit={handleSubmit}
+          isLoading={isLoading}
+          onCancel={onCancel}
+          hasHistory={false}
+          onImageStart={onImageStart}
+          onImageGenerated={onImageGenerated}
+          mode={mode}
+          onModeChange={onModeChange}
+        />
     </div>
     <p className="text-xs text-neutral-500">
       Powered by Locaith Solution Tech and Partner 2025.

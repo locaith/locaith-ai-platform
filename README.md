@@ -1,14 +1,14 @@
-# Locaith AI Platform
+# Gemini Fullstack LangGraph Quickstart
 
-This project demonstrates a fullstack AI application using a React frontend and a Locaith-powered backend agent. The agent is designed to perform comprehensive research on a user's query by dynamically generating search terms, querying the web using Google Search, reflecting on the results to identify knowledge gaps, and iteratively refining its search until it can provide a well-supported answer with citations. This application serves as an example of building research-augmented conversational AI using Locaith AI technology.
+This project demonstrates a fullstack application using a React frontend and a LangGraph-powered backend agent. The agent is designed to perform comprehensive research on a user's query by dynamically generating search terms, querying the web using Google Search, reflecting on the results to identify knowledge gaps, and iteratively refining its search until it can provide a well-supported answer with citations. This application serves as an example of building research-augmented conversational AI using LangGraph and Google's Gemini models.
 
-<img src="./app.png" title="Locaith AI Platform" alt="Locaith AI Platform" width="90%">
+<img src="./app.png" title="Gemini Fullstack LangGraph" alt="Gemini Fullstack LangGraph" width="90%">
 
 ## Features
 
-- 💬 Fullstack application with a React frontend and Locaith AI backend.
-- 🧠 Powered by a Locaith AI agent for advanced research and conversational AI.
-- 🔍 Dynamic search query generation using Locaith AI models.
+- 💬 Fullstack application with a React frontend and LangGraph backend.
+- 🧠 Powered by a LangGraph agent for advanced research and conversational AI.
+- 🔍 Dynamic search query generation using Google Gemini models.
 - 🌐 Integrated web research via Google Search API.
 - 🤔 Reflective reasoning to identify knowledge gaps and refine searches.
 - 📄 Generates answers with citations from gathered sources.
@@ -19,7 +19,7 @@ This project demonstrates a fullstack AI application using a React frontend and 
 The project is divided into two main directories:
 
 -   `frontend/`: Contains the React application built with Vite.
--   `backend/`: Contains the Locaith AI/FastAPI application, including the research agent logic.
+-   `backend/`: Contains the LangGraph/FastAPI application, including the research agent logic.
 
 ## Getting Started: Development and Local Testing
 
@@ -97,7 +97,7 @@ _Note: If you are not running the docker-compose.yml example or exposing the bac
 
    Run the following command from the **project root directory**:
    ```bash
-   docker build -t locaith-ai-platform -f Dockerfile .
+   docker build -t gemini-fullstack-langgraph -f Dockerfile .
    ```
 **2. Run the Production Server:**
 
@@ -117,4 +117,4 @@ Open your browser and navigate to `http://localhost:8123/app/` to see the applic
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details. 

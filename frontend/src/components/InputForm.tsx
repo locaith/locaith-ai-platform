@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { SquarePen, Brain, StopCircle, ArrowUp, Image as ImageIcon, Video, Wand2, Wrench, ChevronDown, FileText, Palette, Globe, PenTool, Paperclip, Download, X } from "lucide-react";
+import { SquarePen, Brain, StopCircle, ArrowUp, Image as ImageIcon, Video, Wand2, Wrench, ChevronDown, Globe, PenTool, Paperclip, Download, X } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -22,6 +22,10 @@ interface InputFormProps {
   onCancel: () => void;
   isLoading: boolean;
   hasHistory: boolean;
+  mode?: "chat" | "image";
+  onModeChange?: (mode: "chat" | "image") => void;
+  onImageStart?: (imageData: { id: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  onImageGenerated?: (imageData: { id: string; dataUrl: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
 }
 
 export const InputForm: React.FC<InputFormProps> = ({
@@ -29,56 +33,291 @@ export const InputForm: React.FC<InputFormProps> = ({
   onCancel,
   isLoading,
   hasHistory,
+  mode: externalMode,
+  onModeChange,
+  onImageStart,
+  onImageGenerated,
 }) => {
   const [internalInputValue, setInternalInputValue] = useState("");
   const [effort, setEffort] = useState("medium");
   // Image tool states
-  const [mode, setMode] = useState<"chat" | "image">("chat");
+  const [internalMode, setInternalMode] = useState<"chat" | "image">("chat");
+  const mode = externalMode ?? internalMode;
+  
+  const setMode = (newMode: "chat" | "image") => {
+    if (onModeChange) {
+      onModeChange(newMode);
+    } else {
+      setInternalMode(newMode);
+    }
+  };
+  
+
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [aspectRatio, setAspectRatio] = useState<string>("1:1");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState<boolean>(false);
+  const [autoImageIntentEnabled, setAutoImageIntentEnabled] = useState<boolean>(true);
+  const [justSubmitted, setJustSubmitted] = useState<boolean>(false);
+  const [recentImageGenerated, setRecentImageGenerated] = useState<boolean>(false);
+  
+  // Auto-set mode when image intent is detected
+  useEffect(() => {
+    if (autoImageIntentEnabled && !attachmentFile && !justSubmitted) {
+      const hasImageIntent = internalInputValue.trim() && isImageIntent(internalInputValue) && !isAskAboutImages(internalInputValue);
+      
+      if (hasImageIntent && mode !== "image") {
+        setMode("image");
+      } else if (!hasImageIntent && mode === "image" && !imageLoading) {
+        // Only reset to chat when user TYPES non-image content; do NOT reset on empty input
+        if (internalInputValue.trim()) {
+          const nonImageOrAsk = !isImageIntent(internalInputValue) || isAskAboutImages(internalInputValue);
+          if (nonImageOrAsk) {
+            setMode("chat");
+          }
+        }
+      }
+    }
+    
+    // Reset justSubmitted flag when user starts typing again
+    if (justSubmitted && internalInputValue.trim()) {
+      setJustSubmitted(false);
+    }
+    
+    // Reset recentImageGenerated flag when user starts typing non-image content
+    if (recentImageGenerated && internalInputValue.trim()) {
+      const hasImageIntent = isImageIntent(internalInputValue) && !isAskAboutImages(internalInputValue);
+      if (!hasImageIntent) {
+        setRecentImageGenerated(false);
+      }
+    }
+  }, [internalInputValue, autoImageIntentEnabled, mode, attachmentFile, justSubmitted, imageLoading, recentImageGenerated]);
+
+  // Intent detection: auto choose image tool like ChatGPT
+  const isImageIntent = (text: string) => {
+    const t = (text || "").toLowerCase();
+    const keywords = [
+      "tạo ảnh",
+      "tạo hình",
+      "vẽ ảnh",
+      "vẽ hình",
+      "image",
+      "ảnh",
+      "photo",
+      "hình",
+      "chỉnh sửa ảnh",
+      "sửa ảnh",
+      "edit image",
+      "generate image",
+    ];
+    return keywords.some((k) => t.includes(k));
+  };
+
+  // Detect if user is asking about images rather than requesting creation
+  const isAskAboutImages = (text: string) => {
+    const t = (text || "").toLowerCase();
+    const askWords = [
+      "hỏi",
+      "cách",
+      "làm sao",
+      "có thể",
+      "được không",
+      "what",
+      "how",
+      "cách dùng",
+      "các mẫu ảnh",
+      "ví dụ ảnh",
+      // strengthened intent words
+      "cơ chế",
+      "nguyên lý",
+      "cách hoạt động",
+      "hoạt động",
+      "giải thích",
+      "phân tích",
+      "tại sao",
+      "vì sao",
+      "explain",
+      "mechanism",
+      "workflow",
+      "principle",
+      "theory",
+      "mô hình",
+      // design-related asks
+      "thiết kế",
+      "design",
+    ];
+    return isImageIntent(t) && (askWords.some((k) => t.includes(k)) || t.includes("?"));
+  };
+
+  // Call backend intent classifier for ambiguous cases
+  const classifyImageIntent = async (
+    text: string
+  ): Promise<{ intent: "create" | "chat"; confidence: number }> => {
+    const url = import.meta.env.DEV
+      ? "/api/intent/image"
+      : "http://localhost:8123/api/intent/image";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_input: text }),
+    });
+    try {
+      const json = await res.json();
+      const intent = json?.intent === "create" ? "create" : "chat";
+      const confidence = Number(json?.confidence ?? 0);
+      return { intent, confidence };
+    } catch (_) {
+      return { intent: "chat", confidence: 0 };
+    }
+  };
 
   const handleInternalSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (mode === "image") {
-      if (!internalInputValue.trim()) return;
+
+    const trimmed = internalInputValue.trim();
+    if (!trimmed) return;
+
+    // Decide routing: prefer explicit mode or attachment; else infer by classifier + explicit verbs
+    let routeToImage = mode === "image" || !!attachmentFile;
+    if (!routeToImage) {
+      const keywordSuggestsImage = isImageIntent(trimmed);
+      if (keywordSuggestsImage) {
+        try {
+          const { intent, confidence } = await classifyImageIntent(trimmed);
+          const explicitCreate = /(^|\s)(tạo|vẽ|render|generate)\b/i.test(trimmed);
+          routeToImage = (intent === "create" && confidence >= 0.6) || (explicitCreate && !isAskAboutImages(trimmed));
+        } catch (_) {
+          // fall back to explicit verbs only when classifier fails
+          routeToImage = /(^|\s)(tạo|vẽ|render|generate)\b/i.test(trimmed) && !isAskAboutImages(trimmed);
+        }
+      }
+    }
+
+    console.info('[InputForm] Submit pressed', { mode, routeToImage, text: trimmed, aspectRatio });
+    if (routeToImage) {
+      // Ensure UI switches to image mode so preview panel is visible
+      if (mode !== "image") setMode("image");
+
+      // Immediately emit start event so chat shows user + AI placeholder
+      const opId = `${Date.now()}`;
+      if (onImageStart) {
+        onImageStart({
+          id: opId,
+          prompt: trimmed,
+          aspectRatio,
+          isEdit: !!attachmentFile,
+          originalFile: attachmentFile || undefined,
+        });
+      }
+
       try {
         setImageLoading(true);
         setImagePreview(null);
         let dataUrl = "";
+        let lastJson: any = null; // giữ JSON để hiển thị lý do nếu không có ảnh
         if (attachmentFile) {
           const fd = new FormData();
-          fd.append("prompt", internalInputValue.trim());
+          fd.append("prompt", trimmed);
           fd.append("aspect_ratio", aspectRatio);
           fd.append("file", attachmentFile);
           const url = import.meta.env.DEV ? "/api/image/edit" : "http://localhost:8123/api/image/edit";
+
+          // Validate URL before fetch
+          if (!url || typeof url !== "string" || url.trim() === "") {
+            throw new Error("Invalid URL for image edit");
+          }
+          console.info('[InputForm] POST /api/image/edit', { aspectRatio, hasFile: !!attachmentFile, prompt: trimmed });
+
           const res = await fetch(url, { method: "POST", body: fd });
-          if (!res.ok) throw new Error(`Image edit failed: ${res.status}`);
-          const json = await res.json();
+          let json: any = null;
+          try {
+            json = await res.json();
+          } catch (_) {
+            json = null;
+          }
+          lastJson = json;
+          if (!res.ok) {
+            const detail = Array.isArray(json?.detail)
+              ? json.detail.map((d: any) => d?.msg || d).join("; ")
+              : (json?.detail || json?.message);
+            throw new Error(detail || `Image edit failed: ${res.status}`);
+          }
+          if (!json) throw new Error("No response body");
           dataUrl = json?.data_url || "";
         } else {
           const url = import.meta.env.DEV ? "/api/image/generate" : "http://localhost:8123/api/image/generate";
+
+          // Validate URL before fetch
+          if (!url || typeof url !== "string" || url.trim() === "") {
+            throw new Error("Invalid URL for image generate");
+          }
+          console.info('[InputForm] POST /api/image/generate', { aspectRatio, prompt: trimmed });
+
           const res = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: internalInputValue.trim(), aspect_ratio: aspectRatio }),
+            body: JSON.stringify({ prompt: trimmed, aspect_ratio: aspectRatio }),
           });
-          if (!res.ok) throw new Error(`Image generate failed: ${res.status}`);
-          const json = await res.json();
+          let json: any = null;
+          try {
+            json = await res.json();
+          } catch (_) {
+            json = null;
+          }
+          lastJson = json;
+          if (!res.ok) {
+            const detail = Array.isArray(json?.detail)
+              ? json.detail.map((d: any) => d?.msg || d).join("; ")
+              : (json?.detail || json?.message);
+            throw new Error(detail || `Image generate failed: ${res.status}`);
+          }
+          if (!json) throw new Error("No response body");
           dataUrl = json?.data_url || "";
         }
-        if (dataUrl) setImagePreview(dataUrl);
+        if (dataUrl) {
+          console.info('[InputForm] Image data_url received');
+          setImagePreview(dataUrl);
+
+          // Call callback to add image to chat history like ChatGPT/Gemini
+          if (onImageGenerated) {
+            onImageGenerated({
+              id: opId,
+              dataUrl,
+              prompt: trimmed,
+              aspectRatio,
+              isEdit: !!attachmentFile,
+              originalFile: attachmentFile || undefined,
+            });
+          }
+
+          // Mark that we just generated an image to prevent mode reset
+          setRecentImageGenerated(true);
+          
+          // Clear input after successful image generation to allow new prompts
+          setInternalInputValue("");
+          
+          // Keep image mode active for continued image generation
+           // Do not auto-reset recentImageGenerated; user can type non-image content or press X to exit image mode
+        } else {
+          console.warn('[InputForm] No image returned', lastJson);
+          const reason = Array.isArray(lastJson?.detail)
+            ? lastJson.detail.map((d: any) => d?.msg || d).join("; ")
+            : (lastJson?.detail || lastJson?.message || lastJson?.caption || (lastJson?.no_image ? "Model returned no image" : ""));
+          alert(reason ? `Không nhận được ảnh: ${reason}` : "Model không trả về ảnh. Có thể bị chặn bởi safety hoặc cấu hình không hợp lệ.");
+        }
       } catch (err) {
         console.error(err);
-        alert("Tạo/Chỉnh sửa ảnh thất bại. Vui lòng thử lại.");
+        const msg = (err as any)?.message || "Tạo/Chỉnh sửa ảnh thất bại. Vui lòng thử lại.";
+        alert(msg);
       } finally {
         setImageLoading(false);
       }
       return;
     }
-    if (!internalInputValue.trim()) return;
-    onSubmit(internalInputValue, effort);
+
+    // Fall back to normal chat
+    onSubmit(trimmed, effort);
+    setJustSubmitted(true);
     setInternalInputValue("");
   };
 
@@ -91,8 +330,6 @@ export const InputForm: React.FC<InputFormProps> = ({
     const msg =
       tool === "word"
         ? "Soạn văn bản Word: Tính năng đang phát triển."
-        : tool === "image"
-        ? "Tạo ảnh: Tính năng đang phát triển."
         : tool === "video"
         ? "Tạo video: Tính năng đang phát triển."
         : tool === "marketing"
@@ -107,7 +344,8 @@ export const InputForm: React.FC<InputFormProps> = ({
     setAttachmentFile(f);
   };
 
-  const isSubmitDisabled = (mode === "image" ? !internalInputValue.trim() : !internalInputValue.trim()) || isLoading || imageLoading;
+  const isSubmitDisabled = !internalInputValue.trim() || imageLoading;
+  const showImageControls = mode === "image" || !!attachmentFile || (isImageIntent(internalInputValue) && !isAskAboutImages(internalInputValue));
 
   return (
     <form onSubmit={handleInternalSubmit} className={`flex flex-col gap-2 p-4 max-w-3xl mx-auto w-full`}>
@@ -116,7 +354,7 @@ export const InputForm: React.FC<InputFormProps> = ({
           value={internalInputValue}
           onChange={(e) => setInternalInputValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleInternalSubmit(); } }}
-          placeholder={mode === "image" ? "Mô tả ảnh muốn tạo/sửa..." : "Nhập nội dung..."}
+          placeholder={showImageControls ? "Mô tả ảnh muốn tạo/sửa..." : "Nhập nội dung..."}
           className={`w-full text-neutral-100 placeholder-neutral-500 resize-none border-0 focus:outline-none focus:ring-0 outline-none focus-visible:ring-0 shadow-none md:text-base  min-h-[56px] max-h-[200px]`}
           rows={1}
         />
@@ -127,7 +365,7 @@ export const InputForm: React.FC<InputFormProps> = ({
             </Button>
           ) : (
             <Button type="submit" variant="ghost" className={`${isSubmitDisabled ? "text-neutral-500" : "text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"} p-2 cursor-pointer rounded-full transition-all duration-200 text-base`} disabled={isSubmitDisabled}>
-              {mode === "image" ? "Tạo ảnh" : "Search"}
+              Gửi
               <ArrowUp className="h-5 w-5" />
             </Button>
           )}
@@ -167,17 +405,45 @@ export const InputForm: React.FC<InputFormProps> = ({
               </SelectContent>
             </Select>
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+          {showImageControls ? (
+            // Image mode: Show "Tạo ảnh" with X button
+            <div className="flex items-center gap-1">
               <Button
                 variant="outline"
-                className="flex items-center gap-2 px-3 py-1.5 h-8 text-xs bg-neutral-700 border-neutral-600 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-xl rounded-t-sm"
+                className="flex items-center gap-2 px-3 py-1.5 h-8 text-xs bg-blue-600 border-blue-500 text-white hover:bg-blue-700 rounded-xl rounded-t-sm"
+                disabled
               >
-                <Wrench className="w-3 h-3" />
-                <span>Tools</span>
-                <ChevronDown className="w-3 h-3" />
+                <ImageIcon className="w-3 h-3" />
+                <span>Tạo ảnh</span>
               </Button>
-            </DropdownMenuTrigger>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setMode("chat");
+                  setAutoImageIntentEnabled(true);
+                  setJustSubmitted(false);
+                  setRecentImageGenerated(false);
+                }}
+                className="flex items-center justify-center w-8 h-8 p-0 bg-neutral-700 border-neutral-600 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-xl"
+                title="Tắt chế độ tạo ảnh"
+              >
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+          ) : (
+            // Normal mode: Show Tools dropdown
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="flex items-center gap-2 px-3 py-1.5 h-8 text-xs bg-neutral-700 border-neutral-600 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-xl rounded-t-sm"
+                >
+                  <Wrench className="w-3 h-3" />
+                  <span>Tools</span>
+                  <ChevronDown className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
             <DropdownMenuContent className="w-48 bg-neutral-700 border-neutral-600">
               <DropdownMenuItem
                 onClick={() => handleToolClick("word")}
@@ -216,7 +482,8 @@ export const InputForm: React.FC<InputFormProps> = ({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {mode === "image" && (
+          )}
+          {showImageControls && (
             <>
               <input id="image-file-input" type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
               <Button
@@ -272,14 +539,12 @@ export const InputForm: React.FC<InputFormProps> = ({
       </div>
 
       {/* Image preview panel */}
-      {mode === "image" && imagePreview && (
+      {showImageControls && imagePreview && (
         <div className="mt-2 rounded-xl border border-neutral-700 bg-neutral-800 p-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs text-neutral-300">Preview</span>
-            <a href={imagePreview} download={`locaith-image-${Date.now()}.png`} className="text-xs">
-              <Button size="sm" variant="outline" className="text-xs">
-                <Download className="h-3 w-3 mr-1" /> Tải về
-              </Button>
+            <a href={imagePreview} download={`locaith-image-${Date.now()}.png`} className="text-white text-xs no-underline hover:no-underline cursor-pointer">
+              Tải về
             </a>
           </div>
           <img src={imagePreview} alt="generated" className="max-h-[360px] w-auto rounded-md border border-neutral-700" />

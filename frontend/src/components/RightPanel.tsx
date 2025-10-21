@@ -1,12 +1,12 @@
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OrchestratorIndicator } from "@/components/OrchestratorIndicator";
 import { SearchResultsPanel } from "@/components/SearchResultsPanel";
 import { ProcessedEvent } from "@/components/ActivityTimeline";
 import { Clipboard, ClipboardCheck, ListChecks, PackagePlus } from "lucide-react";
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useDevMode } from "@/lib/devMode";
 
 interface RightPanelProps {
@@ -32,6 +32,12 @@ const PolicyBadge: React.FC = () => {
     async function fetchPolicy() {
       try {
         const url = import.meta.env.DEV ? "/api/policy/current" : "http://localhost:8123/api/policy/current";
+        
+        // Validate URL before fetch
+        if (!url || typeof url !== "string" || url.trim() === "") {
+          throw new Error("Invalid URL for policy fetch");
+        }
+        
         const res = await fetch(url);
         const data = await res.json();
         const preamble: string = data?.preamble || "";
@@ -40,6 +46,7 @@ const PolicyBadge: React.FC = () => {
           : "0";
         setLabel(`Policy v${checksum}`);
       } catch (e) {
+        console.warn('Policy fetch error:', e);
         setLabel("Policy: unavailable");
       }
     }

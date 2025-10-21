@@ -4,13 +4,20 @@ from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 from .preview import router as preview_router
 from .image import router as image_router
+from .intent import router as intent_router
 from policy.admin import router as policy_admin_router
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env at startup so uvicorn works standalone
+load_dotenv()
 
 # Define the FastAPI app
 app = FastAPI()
 app.include_router(preview_router)
 app.include_router(policy_admin_router)
 app.include_router(image_router)
+app.include_router(intent_router)
 
 
 def create_frontend_router(build_dir="../frontend/dist"):

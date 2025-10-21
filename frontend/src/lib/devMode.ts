@@ -1,7 +1,16 @@
+import { safeCreateURLSearchParams } from "./errorHandler";
+
 export function useDevMode(): boolean {
-  const params = new URLSearchParams(window.location.search);
-  const q = params.get("dev");
-  if (q === "1" || q === "true") return true;
+  try {
+    const params = safeCreateURLSearchParams(window.location.search);
+    if (params) {
+      const q = params.get("dev");
+      if (q === "1" || q === "true") return true;
+    }
+  } catch (error) {
+    console.warn('Invalid URL search params in useDevMode:', window.location.search, error);
+  }
+  
   try {
     const v = localStorage.getItem("locaith.dev");
     if (v === "1" || v === "true") return true;

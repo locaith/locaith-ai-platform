@@ -1,7 +1,7 @@
-import type React from "react";
+import React from "react";
 import type { Message } from "@langchain/langgraph-sdk";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, Copy, CopyCheck } from "lucide-react";
+import { Loader2, Copy, CopyCheck, Download } from "lucide-react";
 import { InputForm } from "@/components/InputForm";
 import { Button } from "@/components/ui/button";
 import { useState, ReactNode } from "react";
@@ -145,6 +145,28 @@ const mdComponents = {
       {children}
     </td>
   ),
+  // Add a safe image renderer to prevent empty src errors
+  img: ({ className, children, src, alt = "image", ...props }: MdComponentProps) => {
+    const s = typeof src === "string" ? src.trim() : "";
+    if (!s) {
+      // Render a harmless placeholder text when src is empty
+      return (
+        <span className={cn("text-xs text-neutral-400", className)} {...props}>
+          {alt || "Image"}
+        </span>
+      );
+    }
+    return (
+      <img
+        src={s}
+        alt={alt}
+        className={cn("max-h-[420px] w-auto rounded-md border border-neutral-700", className)}
+        loading="lazy"
+        decoding="async"
+        {...props}
+      />
+    );
+  },
 };
 
 // Props for HumanMessageBubble
@@ -154,14 +176,12 @@ interface HumanMessageBubbleProps {
 }
 
 // HumanMessageBubble Component
-const HumanMessageBubble: React.FC<HumanMessageBubbleProps> = ({
+function HumanMessageBubble({
   message,
   mdComponents,
-}) => {
+}: HumanMessageBubbleProps) {
   return (
-    <div
-      className={`text-white rounded-3xl break-words min-h-7 bg-neutral-700 max-w-[100%] sm:max-w-[90%] px-4 pt-3 rounded-br-lg`}
-    >
+    <div className="text-white rounded-3xl break-words min-h-7 bg-neutral-700 max-w-[100%] sm:max-w-[90%] px-4 pt-3 rounded-br-lg">
       <ReactMarkdown components={mdComponents}>
         {typeof message.content === "string"
           ? message.content
@@ -169,7 +189,7 @@ const HumanMessageBubble: React.FC<HumanMessageBubbleProps> = ({
       </ReactMarkdown>
     </div>
   );
-};
+}
 
 // Props for AiMessageBubble
 interface AiMessageBubbleProps {
@@ -184,7 +204,7 @@ interface AiMessageBubbleProps {
 }
 
 // AiMessageBubble Component
-const AiMessageBubble: React.FC<AiMessageBubbleProps> = ({
+function AiMessageBubble({
   message,
   historicalActivity,
   liveActivity,
@@ -193,11 +213,26 @@ const AiMessageBubble: React.FC<AiMessageBubbleProps> = ({
   mdComponents,
   handleCopy,
   copiedMessageId,
-}) => {
+}: AiMessageBubbleProps) {
   // Determine which activity events to show and if it's for a live loading message
   const activityForThisBubble =
     isLastMessage && isOverallLoading ? liveActivity : historicalActivity;
   const isLiveActivityForThisBubble = isLastMessage && isOverallLoading;
+
+  // Gating: hide early English streaming to avoid flicker; show only when Vietnamese diacritics appear
+  // or when the stream has matured (length threshold / markdown structure) or loading completes.
+  const rawContentStr =
+    typeof message.content === "string"
+      ? message.content
+      : JSON.stringify(message.content);
+  const contentStr = rawContentStr || "";
+  const hasVi = /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴĐ]/.test(
+    contentStr
+  );
+  const lenOk = contentStr.trim().length >= 80; // wait for enough tokens to reduce flicker
+  const hasStructure = /(\n-\s|\n\*\s|```|^#{1,6}\s|\n\d+\.\s)/m.test(contentStr);
+  const hideLiveEarly = isLastMessage && isOverallLoading && !(hasVi || lenOk || hasStructure);
+  const hasText = contentStr && contentStr.length > 0;
 
   return (
     <div className={`relative break-words flex flex-col`}>
@@ -209,31 +244,28 @@ const AiMessageBubble: React.FC<AiMessageBubbleProps> = ({
           />
         </div>
       )}
-      <ReactMarkdown components={mdComponents}>
-        {typeof message.content === "string"
-          ? message.content
-          : JSON.stringify(message.content)}
-      </ReactMarkdown>
+      {hideLiveEarly ? (
+        <div className="flex items-center gap-2 text-neutral-400 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>Đang tạo phản hồi...</span>
+        </div>
+      ) : (
+        <ReactMarkdown components={mdComponents}>{contentStr}</ReactMarkdown>
+      )}
       <Button
         variant="default"
         className={`cursor-pointer bg-neutral-700 border-neutral-600 text-neutral-300 self-end ${
-          message.content.length > 0 ? "visible" : "hidden"
+          hasText && !hideLiveEarly ? "visible" : "hidden"
         }`}
-        onClick={() =>
-          handleCopy(
-            typeof message.content === "string"
-              ? message.content
-              : JSON.stringify(message.content),
-            message.id!
-          )
-        }
+        onClick={() => handleCopy(contentStr, message.id!)}
       >
         {copiedMessageId === message.id ? "Copied" : "Copy"}
         {copiedMessageId === message.id ? <CopyCheck /> : <Copy />}
       </Button>
     </div>
   );
-};
+}
+
 
 interface ChatMessagesViewProps {
   messages: Message[];
@@ -243,6 +275,11 @@ interface ChatMessagesViewProps {
   onCancel: () => void;
   liveActivityEvents: ProcessedEvent[];
   historicalActivities: Record<string, ProcessedEvent[]>;
+  onImageStart?: (imageData: { id: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  onImageGenerated?: (imageData: { id: string; dataUrl: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  // NEW: controlled input mode from parent
+  inputMode: "chat" | "image";
+  onModeChange: (mode: "chat" | "image") => void;
 }
 
 export function ChatMessagesView({
@@ -253,8 +290,14 @@ export function ChatMessagesView({
   onCancel,
   liveActivityEvents,
   historicalActivities,
+  onImageStart,
+  onImageGenerated,
+  inputMode,
+  onModeChange,
 }: ChatMessagesViewProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  // REMOVED: local inputMode state; now controlled by parent
+  // const [inputMode, setInputMode] = useState<"chat" | "image">("chat");
 
   const handleCopy = async (text: string, messageId: string) => {
     try {
@@ -271,30 +314,87 @@ export function ChatMessagesView({
         <div className="p-4 md:p-6 space-y-2 max-w-4xl mx-auto pt-16">
           {messages.map((message, index) => {
             const isLast = index === messages.length - 1;
-            return (
-              <div key={message.id || `msg-${index}`} className="space-y-3">
-                <div
-                  className={`flex items-start gap-3 ${
-                    message.type === "human" ? "justify-end" : ""
-                  }`}
-                >
-                  {message.type === "human" ? (
-                    <HumanMessageBubble
-                      message={message}
-                      mdComponents={mdComponents}
+            let bubble: ReactNode;
+            if (message.type === "human") {
+              bubble = (
+                <HumanMessageBubble message={message} mdComponents={mdComponents} />
+              );
+            } else if (message.id?.startsWith("ai-img-pending-")) {
+              bubble = (
+                <div className="relative group max-w-[85%] md:max-w-[80%] rounded-xl p-3 shadow-sm break-words bg-neutral-800 text-neutral-100 rounded-bl-none w-full min-h-[56px]">
+                  <div className="flex items-center gap-2 text-neutral-300 text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Đang tạo ảnh...</span>
+                  </div>
+                </div>
+              );
+            } else if (message.id?.startsWith("ai-img-")) {
+              const raw = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+              const imgMatch = raw.match(/!\[[^\]]*\]\((.*?)\)/);
+              const imgUrl = imgMatch?.[1]?.trim() || "";
+              const metaText = imgUrl ? raw.replace(imgMatch![0], "").trim() : raw;
+              // Extract prompt for suggestions but do not show raw meta
+              const promptMatch = metaText.match(/\*\*Prompt:\*\*\s*(.*)/i);
+              const promptForSuggest = promptMatch?.[1]?.trim() || "";
+              const suggestions = [
+                "Bạn muốn đổi phong cách cho ảnh này không (điện ảnh, hoạt hình, tối giản)?",
+                "Có cần thay đổi tỉ lệ khung hình (16:9, 9:16, 4:3)?",
+                "Bạn muốn thêm/bớt chi tiết nào (ánh sáng, nền, phụ kiện)?",
+              ];
+              bubble = (
+                <div className="relative group max-w-[85%] md:max-w-[80%] break-words w-full">
+                  {imgUrl ? (
+                    <img
+                      src={imgUrl}
+                      alt="Generated"
+                      className="max-h-[420px] w-auto rounded-md border border-neutral-700"
+                      loading="lazy"
+                      decoding="async"
                     />
                   ) : (
-                    <AiMessageBubble
-                      message={message}
-                      historicalActivity={historicalActivities[message.id!]}
-                      liveActivity={liveActivityEvents} // Pass global live events
-                      isLastMessage={isLast}
-                      isOverallLoading={isLoading} // Pass global loading state
-                      mdComponents={mdComponents}
-                      handleCopy={handleCopy}
-                      copiedMessageId={copiedMessageId}
-                    />
+                    <div className="text-neutral-400 text-xs">Không có ảnh để hiển thị</div>
                   )}
+                  {/* Suggestions + Download (no gray bubble background) */}
+                  <div className="mt-2 text-xs text-neutral-300">
+                    <div className="flex items-center justify-between mb-1">
+                      <span>Gợi ý chỉnh sửa</span>
+                      {imgUrl && (
+                        <a
+                          href={imgUrl}
+                          download={`locaith-image-${Date.now()}.png`}
+                          className="text-white text-xs no-underline hover:no-underline cursor-pointer"
+                        >
+                          Tải về
+                        </a>
+                      )}
+                    </div>
+                    <ul className="list-disc pl-5">
+                      {suggestions.map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              );
+            } else {
+              bubble = (
+                <AiMessageBubble
+                  message={message}
+                  historicalActivity={historicalActivities[message.id!]}
+                  liveActivity={liveActivityEvents}
+                  isLastMessage={isLast}
+                  isOverallLoading={isLoading}
+                  mdComponents={mdComponents}
+                  handleCopy={handleCopy}
+                  copiedMessageId={copiedMessageId}
+                />
+              );
+            }
+
+            return (
+              <div key={message.id || `msg-${index}`} className="space-y-3">
+                <div className={`flex items-start gap-3 ${message.type === "human" ? "justify-end" : ""}`}>
+                  {bubble}
                 </div>
               </div>
             );
@@ -303,8 +403,6 @@ export function ChatMessagesView({
             (messages.length === 0 ||
               messages[messages.length - 1].type === "human") && (
               <div className="flex items-start gap-3 mt-3">
-                {" "}
-                {/* AI message row structure */}
                 <div className="relative group max-w-[85%] md:max-w-[80%] rounded-xl p-3 shadow-sm break-words bg-neutral-800 text-neutral-100 rounded-bl-none w-full min-h-[56px]">
                   {liveActivityEvents.length > 0 ? (
                     <div className="text-xs">
@@ -329,6 +427,10 @@ export function ChatMessagesView({
         isLoading={isLoading}
         onCancel={onCancel}
         hasHistory={messages.length > 0}
+        mode={inputMode}
+        onModeChange={onModeChange}
+        onImageStart={onImageStart}
+        onImageGenerated={onImageGenerated}
       />
     </div>
   );

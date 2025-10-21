@@ -1,12 +1,11 @@
 import { useStream } from "@langchain/langgraph-sdk/react";
 import type { Message } from "@langchain/langgraph-sdk";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ProcessedEvent } from "@/components/ActivityTimeline";
 import { WelcomeScreen } from "@/components/WelcomeScreen";
 import { ChatMessagesView } from "@/components/ChatMessagesView";
 import { Button } from "@/components/ui/button";
-import { SearchResultsPanel } from "@/components/SearchResultsPanel";
-import { OrchestratorIndicator } from "@/components/OrchestratorIndicator";
+
 import { RightPanel } from "@/components/RightPanel";
 import Layout from "@/components/Layout";
 
@@ -20,15 +19,30 @@ export default function App() {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const hasFinalizeEventOccurredRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const [imageMessages, setImageMessages] = useState<Message[]>([]);
+  // NEW: global input mode to keep Image Mode persistent across views
+  const [globalInputMode, setGlobalInputMode] = useState<"chat" | "image">("chat");
+  // Validate and create API URL
+  const getApiUrl = () => {
+    try {
+      const url = import.meta.env.DEV ? "http://127.0.0.1:2024" : "http://localhost:8123";
+      if (!url || typeof url !== "string" || url.trim() === "") {
+        throw new Error("Invalid API URL configuration");
+      }
+      return url.trim();
+    } catch (error) {
+      console.error("API URL validation error:", error);
+      return "http://127.0.0.1:2024"; // Fallback to dev server URL
+    }
+  };
+
   const thread = useStream<{
     messages: Message[];
     initial_search_query_count: number;
     max_research_loops: number;
     reasoning_model: string;
   }>({
-    apiUrl: import.meta.env.DEV
-      ? "/api"
-      : "http://localhost:8123",
+    apiUrl: getApiUrl(),
     assistantId: "agent",
     messagesKey: "messages",
     onUpdateEvent: (event: any) => {
@@ -95,7 +109,18 @@ export default function App() {
       }
     },
     onError: (error: any) => {
-      setError(error.message);
+      const msg = String(error?.message || error || "");
+      const isAbort =
+        error?.name === "AbortError" ||
+        msg.includes("ERR_ABORTED") ||
+        msg.includes("The user aborted a request") ||
+        msg.includes("NetworkError when attempting to fetch resource") ||
+        msg.includes("Failed to fetch");
+      if (isAbort) {
+        console.info("Stream aborted/restarted (ignored):", msg);
+        return; // Đừng hiển thị lỗi abort ra UI
+      }
+      setError(msg);
     },
   });
 
@@ -178,7 +203,7 @@ export default function App() {
     window.location.reload();
   }, [thread]);
 
-  const baseUrl = import.meta.env.BASE_URL || "/";
+
 
   // Chỉ mở panel phải khi thật sự có research.
   // Dựa trên stream đã xử lý: nếu xuất hiện "Generating Search Queries" hoặc "Web Research" thì usedSearch = true.
@@ -186,6 +211,122 @@ export default function App() {
     const t = e.title.toLowerCase();
     return t.includes("generating search queries") || t.includes("web research");
   });
+
+  // Gom và ẩn bubble AI khi đang stream để tránh nhấp nháy
+  const compressMessages = useCallback((messages: Message[]): Message[] => {
+    const out: Message[] = [];
+    for (const m of messages) {
+      const last = out[out.length - 1];
+      if (last && last.type === "ai" && m.type === "ai") {
+        const lastContent =
+          typeof last.content === "string"
+            ? last.content
+            : JSON.stringify(last.content);
+        const curContent =
+          typeof m.content === "string"
+            ? m.content
+            : JSON.stringify(m.content);
+        last.content = [lastContent, curContent].filter(Boolean).join("\n\n");
+        last.id = m.id || last.id;
+      } else {
+        out.push({ ...m });
+      }
+    }
+    return out;
+  }, []);
+
+  // Immediately show user + AI placeholder when image request starts
+  const handleImageStart = useCallback((start: {
+    id: string;
+    prompt: string;
+    aspectRatio: string;
+    isEdit: boolean;
+    originalFile?: File;
+  }) => {
+    const userMessage: Message = {
+      id: `user-img-${start.id}`,
+      type: "human",
+      content: start.isEdit
+        ? `Chỉnh sửa ảnh: ${start.prompt}`
+        : `Tạo ảnh: ${start.prompt}`,
+    };
+
+    const aiPlaceholder: Message = {
+      id: `ai-img-pending-${start.id}`,
+      type: "ai",
+      content: `Tôi sẽ tạo ảnh giúp bạn...
+
+• Prompt: ${start.prompt}
+• Tỷ lệ khung: ${start.aspectRatio}
+
+Đang tạo ảnh...`,
+    };
+
+    setImageMessages(prev => [...prev, userMessage, aiPlaceholder]);
+    // Ensure the input stays in image mode after starting an image task
+    setGlobalInputMode("image");
+  }, []);
+
+  // Replace placeholder with final image when ready
+  const handleImageGenerated = useCallback((imageData: {
+    id: string;
+    dataUrl: string;
+    prompt: string;
+    aspectRatio: string;
+    isEdit: boolean;
+    originalFile?: File;
+  }) => {
+    setImageMessages(prev => prev.map(m => {
+      if (m.id === `ai-img-pending-${imageData.id}`) {
+        const raw = (imageData.dataUrl || "").trim();
+        if (!raw) {
+          console.warn('[App] imageData.dataUrl is empty, replacing with text message');
+          return {
+            ...m,
+            id: `ai-img-${imageData.id}`,
+            content: `Không nhận được ảnh từ server.\n\n**Prompt:** ${imageData.prompt}  \n**Aspect Ratio:** ${imageData.aspectRatio}  \n**Type:** ${imageData.isEdit ? 'Image Edit' : 'Image Generation'}`,
+          };
+        }
+        const finalUrl = raw.startsWith("data:") || raw.startsWith("http")
+          ? raw
+          : `data:image/png;base64,${raw}`;
+        return {
+          ...m,
+          id: `ai-img-${imageData.id}`,
+          content: `![Generated Image](${finalUrl})\n\n**Prompt:** ${imageData.prompt}  \n**Aspect Ratio:** ${imageData.aspectRatio}  \n**Type:** ${imageData.isEdit ? 'Image Edit' : 'Image Generation'}`,
+        };
+      }
+      return m;
+    }));
+  }, []);
+
+  const stableMessages = useMemo(() => {
+    const msgs = thread.messages || [];
+    let processedMsgs = msgs;
+    
+    if (
+      thread.isLoading &&
+      msgs.length > 0 &&
+      msgs[msgs.length - 1]?.type === "ai"
+    ) {
+      processedMsgs = msgs.slice(0, -1); // ẩn bubble AI đang stream
+    }
+    
+    // Merge chat messages with image messages, sorted by timestamp
+    const allMessages = [...compressMessages(processedMsgs), ...imageMessages];
+     allMessages.sort((a, b) => {
+       const getTs = (id?: string) => {
+         if (!id) return 0;
+         const parts = id.split('-');
+         const last = parts[parts.length - 1];
+         const num = parseInt(last);
+         return isNaN(num) ? 0 : num;
+       };
+       return getTs(a.id) - getTs(b.id);
+     });
+     
+     return allMessages;
+   }, [thread.messages, thread.isLoading, compressMessages, imageMessages]);
 
   return (
     <Layout
@@ -198,15 +339,20 @@ export default function App() {
         ) : null
       }
     >
-      {thread.messages.length === 0 ? (
-        <div className="h-full w-full pt-4 px-4">
-          <WelcomeScreen
-            handleSubmit={handleSubmit}
-            isLoading={thread.isLoading}
-            onCancel={handleCancel}
-          />
-        </div>
-      ) : error ? (
+      {stableMessages.length === 0 ? (
+         <div className="h-full w-full pt-4 px-4">
+           <WelcomeScreen
+             handleSubmit={handleSubmit}
+             isLoading={thread.isLoading}
+             onCancel={handleCancel}
+             onImageStart={handleImageStart}
+             onImageGenerated={handleImageGenerated}
+             // pass global input mode to InputForm in Welcome view
+             mode={globalInputMode}
+             onModeChange={setGlobalInputMode}
+           />
+         </div>
+       ) : error ? (
         <div className="flex flex-col items-center justify-center h-full">
           <div className="flex flex-col items-center justify-center gap-4">
             <h1 className="text-2xl text-red-400 font-bold">Error</h1>
@@ -223,13 +369,18 @@ export default function App() {
       ) : (
         <div className="h-full w-full pt-4 px-4">
           <ChatMessagesView
-            messages={thread.messages}
+            messages={stableMessages}
             isLoading={thread.isLoading}
             scrollAreaRef={scrollAreaRef}
             onSubmit={handleSubmit}
             onCancel={handleCancel}
             liveActivityEvents={processedEventsTimeline}
             historicalActivities={historicalActivities}
+            onImageStart={handleImageStart}
+            onImageGenerated={handleImageGenerated}
+            // controlled input mode props
+            inputMode={globalInputMode}
+            onModeChange={setGlobalInputMode}
           />
         </div>
       )}
