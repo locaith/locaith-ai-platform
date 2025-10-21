@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 
 import { RightPanel } from "@/components/RightPanel";
 import Layout from "@/components/Layout";
+import { safeInvokeEdgeFunction } from "@/lib/supabaseClient";
 
 export default function App() {
   const [processedEventsTimeline, setProcessedEventsTimeline] = useState<
@@ -22,6 +23,11 @@ export default function App() {
   const [imageMessages, setImageMessages] = useState<Message[]>([]);
   // NEW: global input mode to keep Image Mode persistent across views
   const [globalInputMode, setGlobalInputMode] = useState<"chat" | "image">("chat");
+  // Word preview state
+  const [wordPreviewActive, setWordPreviewActive] = useState(false);
+  const [wordDocument, setWordDocument] = useState<any | null>(null);
+  const [wordIsGenerating, setWordIsGenerating] = useState(false);
+  const [wordError, setWordError] = useState<string | null>(null);
   // Validate and create API URL
   const getApiUrl = () => {
     try {
@@ -134,6 +140,45 @@ export default function App() {
       }
     }
   }, [thread.messages]);
+
+  // Listen to Word tool open event to show preview
+  useEffect(() => {
+    function onWordOpen(evt: any) {
+      const prompt = evt?.detail?.prompt || "";
+      setWordError(null);
+      setWordIsGenerating(true);
+      // Show a temporary draft immediately
+      setWordDocument({
+        loaiVanBan: "Bản thảo",
+        meta: { ngayLap: new Date().toLocaleDateString("vi-VN") },
+        noiDung: {
+          tieuDe: prompt ? `Bản thảo: ${prompt.slice(0, 60)}` : "Bản thảo",
+          muc: [
+            { heading: "Mục tiêu", paragraphs: [prompt || ""] },
+            { heading: "Nội dung", paragraphs: ["Đang tạo nội dung..."] }
+          ]
+        }
+      });
+      setWordPreviewActive(true);
+
+      // Try invoking Supabase Edge Function for real Word JSON
+      (async () => {
+        const { data, error } = await safeInvokeEdgeFunction("compose-word-json", { prompt });
+        if (error) {
+          console.warn("compose-word-json failed", error);
+          setWordError(String(error?.message || error));
+          setWordIsGenerating(false);
+          return;
+        }
+        setWordDocument(data || null);
+        setWordIsGenerating(false);
+      })();
+    }
+    window.addEventListener("wordToolOpen", onWordOpen as EventListener);
+    return () => {
+      window.removeEventListener("wordToolOpen", onWordOpen as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     if (
@@ -331,12 +376,17 @@ export default function App() {
   return (
     <Layout
       right={
-        usedSearch ? (
-          <RightPanel
-            processedEvents={processedEventsTimeline}
-            isLoading={thread.isLoading}
-          />
-        ) : null
+-        usedSearch ? (
++        (usedSearch || wordPreviewActive) ? (
+           <RightPanel
+             processedEvents={processedEventsTimeline}
+             isLoading={thread.isLoading}
++            wordPreviewActive={wordPreviewActive}
++            wordDocument={wordDocument}
++            wordIsGenerating={wordIsGenerating}
++            wordError={wordError}
+           />
+         ) : null
       }
     >
       {stableMessages.length === 0 ? (

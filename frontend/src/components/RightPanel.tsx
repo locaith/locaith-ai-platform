@@ -8,10 +8,16 @@ import { ProcessedEvent } from "@/components/ActivityTimeline";
 import { Clipboard, ClipboardCheck, ListChecks, PackagePlus } from "lucide-react";
 import React, { useState, useEffect } from "react";
 import { useDevMode } from "@/lib/devMode";
+import { WordPreviewPanel } from "@/components/WordPreviewPanel";
 
 interface RightPanelProps {
   processedEvents: ProcessedEvent[];
   isLoading: boolean;
+  // Word preview (optional)
+  wordPreviewActive?: boolean;
+  wordDocument?: any;
+  wordError?: string | null;
+  wordIsGenerating?: boolean;
 }
 
 function usePlannerData(processedEvents: ProcessedEvent[]) {
@@ -172,13 +178,18 @@ const ArtifactsPanel: React.FC<{ artifacts: any[] }>= ({ artifacts }) => {
   );
 };
 
-export const RightPanel: React.FC<RightPanelProps> = ({ processedEvents, isLoading }) => {
+export const RightPanel: React.FC<RightPanelProps> = ({ processedEvents, isLoading, wordPreviewActive, wordDocument, wordError, wordIsGenerating }) => {
   const plan = usePlannerData(processedEvents);
   const artifacts = useArtifacts(processedEvents);
   const dev = useDevMode();
 
   return (
     <div className="space-y-4">
+      {/* Word preview appears at the top when active */}
+      {wordPreviewActive && (
+        <WordPreviewPanel documentJson={wordDocument} error={wordError || undefined} isGenerating={!!wordIsGenerating} />
+      )}
+
       {/* Orchestrator flow indicator remains minimal */}
       <OrchestratorIndicator processedEvents={processedEvents} isLoading={isLoading} />
       {/* Sources section is always shown when right panel is visible */}

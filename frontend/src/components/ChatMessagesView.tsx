@@ -362,7 +362,7 @@ export function ChatMessagesView({
                         <a
                           href={imgUrl}
                           download={`locaith-image-${Date.now()}.png`}
-                          className="text-white text-xs no-underline hover:no-underline cursor-pointer"
+                          className="text-white text-xs no-underline hover:no-underline cursor-pointer bg-transparent hover:bg-transparent transition-none"
                         >
                           Tải về
                         </a>

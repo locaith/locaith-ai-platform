@@ -326,11 +326,16 @@ export const InputForm: React.FC<InputFormProps> = ({
       setMode("image");
       return;
     }
+    if (tool === "word") {
+      // Trigger opening the RightPanel with Word preview
+      const prompt = internalInputValue.trim();
+      window.dispatchEvent(new CustomEvent("wordToolOpen", { detail: { prompt } }));
+      console.info("Word tool triggered", { prompt });
+      return;
+    }
     // Placeholder hooks for future integration
     const msg =
-      tool === "word"
-        ? "Soạn văn bản Word: Tính năng đang phát triển."
-        : tool === "video"
+      tool === "video"
         ? "Tạo video: Tính năng đang phát triển."
         : tool === "marketing"
         ? "Viết bài marketing: Tính năng đang phát triển."
@@ -543,7 +548,7 @@ export const InputForm: React.FC<InputFormProps> = ({
         <div className="mt-2 rounded-xl border border-neutral-700 bg-neutral-800 p-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs text-neutral-300">Preview</span>
-            <a href={imagePreview} download={`locaith-image-${Date.now()}.png`} className="text-white text-xs no-underline hover:no-underline cursor-pointer">
+            <a href={imagePreview} download={`locaith-image-${Date.now()}.png`} className="text-white text-xs no-underline hover:no-underline cursor-pointer bg-transparent hover:bg-transparent transition-none">
               Tải về
             </a>
           </div>
