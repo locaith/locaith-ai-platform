@@ -24,26 +24,70 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
   onNewChat
 }) => {
   const [darkMode, setDarkMode] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
   
   // Mock data - trong thực tế sẽ lấy từ API hoặc local storage
-  const [chatSessions] = useState<ChatSession[]>([
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([
     {
       id: '1',
       title: 'Hỏi về Locaith AI',
-      timestamp: new Date(Date.now() - 1000 * 60 * 30), // 30 phút trước
+      timestamp: new Date(Date.now() - 1000 * 60 * 30),
       preview: 'Chào bạn! Tôi là Locaith AI. Tôi có thể giúp gì cho bạn?'
     },
     {
       id: '2', 
       title: 'Tạo nội dung marketing',
-      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 giờ trước
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2),
       preview: 'Hãy tạo cho tôi một bài viết marketing về sản phẩm AI...'
     },
     {
       id: '3',
       title: 'Soạn thảo văn bản',
-      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 ngày trước
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24),
       preview: 'Tôi cần viết một email chuyên nghiệp...'
+    },
+    {
+      id: '4',
+      title: 'Phân tích dữ liệu bán hàng',
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 48),
+      preview: 'Giúp tôi phân tích dữ liệu bán hàng tháng này...'
+    },
+    {
+      id: '5',
+      title: 'Viết báo cáo dự án',
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 72),
+      preview: 'Tôi cần viết báo cáo tiến độ dự án...'
+    },
+    {
+      id: '6',
+      title: 'Tối ưu SEO website',
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 96),
+      preview: 'Làm thế nào để tối ưu SEO cho website...'
+    },
+    {
+      id: '7',
+      title: 'Chiến lược social media',
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 120),
+      preview: 'Xây dựng chiến lược social media hiệu quả...'
+    },
+    {
+      id: '8',
+      title: 'Phân tích đối thủ cạnh tranh',
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 144),
+      preview: 'Phân tích đối thủ cạnh tranh trong ngành...'
+    },
+    {
+      id: '9',
+      title: 'Kế hoạch kinh doanh 2025',
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 168),
+      preview: 'Lập kế hoạch kinh doanh cho năm 2025...'
+    },
+    {
+      id: '10',
+      title: 'Tư vấn đầu tư startup',
+      timestamp: new Date(Date.now() - 1000 * 60 * 60 * 192),
+      preview: 'Tư vấn về đầu tư vào startup công nghệ...'
     }
   ]);
 
@@ -60,6 +104,36 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
       return `${diffHours} giờ trước`;
     } else {
       return `${diffDays} ngày trước`;
+    }
+  };
+
+  const handleRename = (sessionId: string, currentTitle: string) => {
+    setEditingId(sessionId);
+    setEditTitle(currentTitle);
+  };
+
+  const saveRename = (sessionId: string) => {
+    if (editTitle.trim()) {
+      setChatSessions(sessions => 
+        sessions.map(session => 
+          session.id === sessionId 
+            ? { ...session, title: editTitle.trim() }
+            : session
+        )
+      );
+    }
+    setEditingId(null);
+    setEditTitle('');
+  };
+
+  const cancelRename = () => {
+    setEditingId(null);
+    setEditTitle('');
+  };
+
+  const handleDelete = (sessionId: string) => {
+    if (confirm('Bạn có chắc chắn muốn xóa cuộc trò chuyện này?')) {
+      setChatSessions(sessions => sessions.filter(session => session.id !== sessionId));
     }
   };
 
@@ -108,7 +182,7 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
         <div className="p-4">
           <Button
             onClick={onNewChat}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white border-0"
+            className="w-full bg-white hover:bg-gray-100 text-black border border-gray-300 font-medium"
           >
             Cuộc trò chuyện mới
           </Button>
@@ -116,27 +190,79 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
 
         {/* Chat Sessions */}
         <div className="flex-1 overflow-y-auto px-4 pb-4">
-          <div className="space-y-2">
+          <div className="space-y-1">
             {chatSessions.map((session) => (
-              <button
+              <div
                 key={session.id}
-                onClick={() => onSessionSelect(session.id)}
-                className={`w-full text-left p-3 rounded-lg transition-colors ${
+                className={`w-full px-3 py-2 rounded-lg transition-colors group ${
                   currentSessionId === session.id
-                    ? 'bg-blue-600/20 border border-blue-500/30'
+                    ? 'bg-white/10 border border-white/20'
                     : 'bg-neutral-800/50 hover:bg-neutral-700/50 border border-transparent'
                 }`}
               >
-                <div className="text-sm font-medium text-neutral-200 truncate mb-1">
-                  {session.title}
-                </div>
-                <div className="text-xs text-neutral-400 truncate mb-1">
-                  {session.preview}
-                </div>
-                <div className="text-xs text-neutral-500">
-                  {formatTime(session.timestamp)}
-                </div>
-              </button>
+                {editingId === session.id ? (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      className="w-full bg-neutral-700 text-white text-sm px-2 py-1 rounded border border-neutral-600 focus:border-white focus:outline-none"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveRename(session.id);
+                        if (e.key === 'Escape') cancelRename();
+                      }}
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveRename(session.id)}
+                        className="text-xs px-2 py-1 bg-white text-black rounded hover:bg-gray-100"
+                      >
+                        Lưu
+                      </button>
+                      <button
+                        onClick={cancelRename}
+                        className="text-xs px-2 py-1 bg-neutral-600 text-white rounded hover:bg-neutral-500"
+                      >
+                        Hủy
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between group">
+                    <div 
+                      className="cursor-pointer flex-1 min-w-0 py-1"
+                      onClick={() => onSessionSelect(session.id)}
+                    >
+                      <div className="text-sm font-medium text-neutral-200 truncate">
+                        {session.title}
+                      </div>
+                    </div>
+                    <div className="flex gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRename(session.id, session.title);
+                        }}
+                        className="text-xs p-1 text-neutral-400 hover:text-white hover:bg-neutral-600 rounded"
+                        title="Đổi tên"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(session.id);
+                        }}
+                        className="text-xs p-1 text-neutral-400 hover:text-white hover:bg-red-600 rounded"
+                        title="Xóa"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -149,12 +275,12 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
               <button
                 onClick={() => setDarkMode(!darkMode)}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  darkMode ? 'bg-blue-600' : 'bg-neutral-600'
+                  darkMode ? 'bg-white' : 'bg-neutral-600'
                 }`}
               >
                 <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    darkMode ? 'translate-x-6' : 'translate-x-1'
+                  className={`inline-block h-4 w-4 transform rounded-full transition-transform ${
+                    darkMode ? 'bg-black translate-x-6' : 'bg-white translate-x-1'
                   }`}
                 />
               </button>

@@ -14,6 +14,7 @@ import {
 } from "@/components/ActivityTimeline"; // Assuming ActivityTimeline is in the same dir or adjust path
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { okaidia } from "react-syntax-highlighter/dist/esm/styles/prism";
+import ImageModal from "@/components/ImageModal";
 
 // Markdown component props type from former ReportView
 type MdComponentProps = {
@@ -23,8 +24,8 @@ type MdComponentProps = {
   [key: string]: any;
 };
 
-// Markdown components (from former ReportView.tsx)
-const mdComponents = {
+// Function to create markdown components with modal support
+const createMdComponents = (onImageClick: (url: string, alt: string) => void) => ({
   h1: ({ className, children, ...props }: MdComponentProps) => (
     <h1 className={cn("text-2xl font-bold mt-4 mb-2", className)} {...props}>
       {children}
@@ -160,19 +161,21 @@ const mdComponents = {
       <img
         src={s}
         alt={alt}
-        className={cn("max-h-[420px] w-auto rounded-md border border-neutral-700", className)}
+        className={cn("max-h-[420px] w-auto rounded-md border border-neutral-700 cursor-pointer hover:opacity-90 transition-opacity", className)}
         loading="lazy"
         decoding="async"
+        onClick={() => onImageClick(s, alt || "Image")}
+        title="Click để xem ảnh phóng to"
         {...props}
       />
     );
   },
-};
+});
 
 // Props for HumanMessageBubble
 interface HumanMessageBubbleProps {
   message: Message;
-  mdComponents: typeof mdComponents;
+  mdComponents: any;
 }
 
 // HumanMessageBubble Component
@@ -198,12 +201,27 @@ interface AiMessageBubbleProps {
   liveActivity: ProcessedEvent[] | undefined;
   isLastMessage: boolean;
   isOverallLoading: boolean;
-  mdComponents: typeof mdComponents;
+  mdComponents: any;
   handleCopy: (text: string, messageId: string) => void;
   copiedMessageId: string | null;
 }
 
 // AiMessageBubble Component
+// Utility: strip trailing sources section from markdown content
+function stripSourcesSection(text: string): string {
+  if (!text) return text;
+  const patterns = [
+    /\n{1,2}Key\s*sources\s*:?.*$/is,
+    /\n{1,2}Nguồn\s*tham\s*khảo\s*:?.*$/is,
+    /\n{1,2}Nguồn\s*:?.*$/is,
+  ];
+  let result = text;
+  for (const re of patterns) {
+    result = result.replace(re, "\n");
+  }
+  return result.trimEnd();
+}
+
 function AiMessageBubble({
   message,
   historicalActivity,
@@ -226,13 +244,14 @@ function AiMessageBubble({
       ? message.content
       : JSON.stringify(message.content);
   const contentStr = rawContentStr || "";
+  const displayStr = stripSourcesSection(contentStr);
   const hasVi = /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴĐ]/.test(
     contentStr
   );
   const lenOk = contentStr.trim().length >= 80; // wait for enough tokens to reduce flicker
   const hasStructure = /(\n-\s|\n\*\s|```|^#{1,6}\s|\n\d+\.\s)/m.test(contentStr);
   const hideLiveEarly = isLastMessage && isOverallLoading && !(hasVi || lenOk || hasStructure);
-  const hasText = contentStr && contentStr.length > 0;
+  const hasText = displayStr && displayStr.length > 0;
 
   return (
     <div className={`relative break-words flex flex-col`}>
@@ -250,14 +269,14 @@ function AiMessageBubble({
           <span>Đang tạo phản hồi...</span>
         </div>
       ) : (
-        <ReactMarkdown components={mdComponents}>{contentStr}</ReactMarkdown>
+        <ReactMarkdown components={mdComponents}>{displayStr}</ReactMarkdown>
       )}
       <Button
         variant="default"
         className={`cursor-pointer bg-neutral-700 border-neutral-600 text-neutral-300 self-end ${
           hasText && !hideLiveEarly ? "visible" : "hidden"
         }`}
-        onClick={() => handleCopy(contentStr, message.id!)}
+        onClick={() => handleCopy(displayStr, message.id!)}
       >
         {copiedMessageId === message.id ? "Copied" : "Copy"}
         {copiedMessageId === message.id ? <CopyCheck /> : <Copy />}
@@ -280,6 +299,9 @@ interface ChatMessagesViewProps {
   // NEW: controlled input mode from parent
   inputMode: "chat" | "image";
   onModeChange: (mode: "chat" | "image") => void;
+  // NEW: recent image for editing
+  recentPreview?: string | null;
+  lastImageUrl?: string | null;
 }
 
 export function ChatMessagesView({
@@ -294,8 +316,11 @@ export function ChatMessagesView({
   onImageGenerated,
   inputMode,
   onModeChange,
+  recentPreview,
+  lastImageUrl,
 }: ChatMessagesViewProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [modalImage, setModalImage] = useState<{ url: string; alt: string } | null>(null);
   // REMOVED: local inputMode state; now controlled by parent
   // const [inputMode, setInputMode] = useState<"chat" | "image">("chat");
 
@@ -308,6 +333,12 @@ export function ChatMessagesView({
       console.error("Failed to copy text: ", err);
     }
   };
+
+  const handleImageClick = (url: string, alt: string) => {
+    setModalImage({ url, alt });
+  };
+
+  const mdComponents = createMdComponents(handleImageClick);
   return (
     <div className="flex flex-col h-full">
       <ScrollArea className="flex-1 overflow-y-auto custom-scroll" ref={scrollAreaRef}>
@@ -321,7 +352,7 @@ export function ChatMessagesView({
               );
             } else if (message.id?.startsWith("ai-img-pending-")) {
               bubble = (
-                <div className="relative group max-w-[85%] md:max-w-[80%] rounded-xl p-3 shadow-sm break-words bg-neutral-800 text-neutral-100 rounded-bl-none w-full min-h-[56px]">
+                <div className="relative group max-w-[85%] md:max-w-[80%] rounded-xl p-3 shadow-sm break-words bg-transparent text-neutral-100 rounded-bl-none w-full min-h-[56px]">
                   <div className="flex items-center gap-2 text-neutral-300 text-sm">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     <span>Đang tạo ảnh...</span>
@@ -347,9 +378,11 @@ export function ChatMessagesView({
                     <img
                       src={imgUrl}
                       alt="Generated"
-                      className="max-h-[420px] w-auto rounded-md border border-neutral-700"
+                      className="max-h-[420px] w-auto rounded-md border border-neutral-700 cursor-pointer hover:opacity-90 transition-opacity"
                       loading="lazy"
                       decoding="async"
+                      onClick={() => setModalImage({ url: imgUrl, alt: "Generated Image" })}
+                      title="Click để xem ảnh phóng to"
                     />
                   ) : (
                     <div className="text-neutral-400 text-xs">Không có ảnh để hiển thị</div>
@@ -403,7 +436,7 @@ export function ChatMessagesView({
             (messages.length === 0 ||
               messages[messages.length - 1].type === "human") && (
               <div className="flex items-start gap-3 mt-3">
-                <div className="relative group max-w-[85%] md:max-w-[80%] rounded-xl p-3 shadow-sm break-words bg-neutral-800 text-neutral-100 rounded-bl-none w-full min-h-[56px]">
+                <div className="relative group max-w-[85%] md:max-w-[80%] rounded-xl p-3 shadow-sm break-words bg-transparent text-neutral-100 rounded-bl-none w-full min-h-[56px]">
                   {liveActivityEvents.length > 0 ? (
                     <div className="text-xs">
                       <ActivityTimeline
@@ -431,6 +464,14 @@ export function ChatMessagesView({
         onModeChange={onModeChange}
         onImageStart={onImageStart}
         onImageGenerated={onImageGenerated}
+        recentPreview={recentPreview}
+        lastImageUrl={lastImageUrl}
+      />
+      <ImageModal
+        isOpen={!!modalImage}
+        onClose={() => setModalImage(null)}
+        imageUrl={modalImage?.url || ""}
+        alt={modalImage?.alt || ""}
       />
     </div>
   );

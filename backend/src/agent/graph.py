@@ -1,4 +1,4 @@
-import os
+import os, json
 
 from agent.tools_and_schemas import SearchQueryList, Reflection, PlannerPlan
 from dotenv import load_dotenv
@@ -342,30 +342,50 @@ def self_check(state: OverallState, config: RunnableConfig) -> OverallState:
 
 
 def finalize_answer(state: OverallState, config: RunnableConfig):
-    """LangGraph node that finalizes the research summary.
+    """LangGraph node that finalizes the research summary and composes the final answer.
 
-    Prepares the final output by deduplicating and formatting sources, then
-    combining them with the running summary to create a well-structured
-    research report with proper citations.
-
-    Args:
-        state: Current graph state containing the running summary and sources gathered
-
-    Returns:
-        Dictionary with state update, including running_summary key containing the formatted final summary with sources
+    Enhancements:
+    - Incorporate Planner plan, Actor artifacts (e.g., code), and Self-check feedback into the final prompt.
+    - Ensure sources are always appended as a References section with real URLs.
+    - Replace any short URLs in the model output with original URLs.
     """
     configurable = Configuration.from_runnable_config(config)
     reasoning_model = state.get("reasoning_model") or configurable.answer_model
+
+    # Prepare combined summaries: web research + optional plan/artifacts/self-check
+    research_summaries = "\n---\n\n".join(state.get("web_research_result", []) or [])
+
+    plan = state.get("plan") or {}
+    try:
+        plan_text = json.dumps(plan, ensure_ascii=False, indent=2) if plan else ""
+    except Exception:
+        plan_text = str(plan)
+
+    artifacts = state.get("artifacts") or []
+    artifact_texts = [a.get("content", "") for a in artifacts if isinstance(a, dict)]
+    self_check_feedback = state.get("self_check_feedback", "")
+
+    extra_ctx_parts = []
+    if plan_text:
+        extra_ctx_parts.append(f"Plan (JSON):\n{plan_text}")
+    if artifact_texts:
+        extra_ctx_parts.append("Artifacts:\n" + "\n\n".join(artifact_texts))
+    if self_check_feedback:
+        extra_ctx_parts.append(f"Self-check feedback:\n{self_check_feedback}")
+
+    combined_summaries = "\n---\n\n".join(
+        [p for p in [research_summaries] + extra_ctx_parts if p]
+    )
 
     # Format the prompt
     current_date = get_current_date()
     formatted_prompt = answer_instructions.format(
         current_date=current_date,
         research_topic=get_research_topic(state["messages"]),
-        summaries="\n---\n\n".join(state.get("web_research_result", [])),
+        summaries=combined_summaries,
     )
 
-    # init Reasoning Model, default to Gemini 2.5 Flash
+    # Init Reasoning Model, default to Gemini 2.5 Pro/Flash depending on configuration
     llm = ChatGoogleGenerativeAI(
         model=reasoning_model,
         temperature=0,
@@ -374,14 +394,28 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     )
     result = llm.invoke(formatted_prompt)
 
-    # Replace the short urls with the original urls and add all used urls to the sources_gathered
+    # Replace the short urls with the original urls and dedupe sources
     unique_sources = []
-    for source in state.get("sources_gathered", []):
-        if source["short_url"] in result.content:
-            result.content = result.content.replace(
-                source["short_url"], source["value"]
-            )
+    seen_values = set()
+    for source in state.get("sources_gathered", []) or []:
+        short_url = source.get("short_url")
+        original = source.get("value") or source.get("url") or source.get("link")
+        if short_url and original and short_url in result.content:
+            result.content = result.content.replace(short_url, original)
+        if original and original not in seen_values:
+            seen_values.add(original)
             unique_sources.append(source)
+
+    # Always append a references section with real URLs so the user can verify
+    if unique_sources:
+        refs_lines = []
+        for s in unique_sources:
+            label = s.get("label") or s.get("title") or (s.get("value") or s.get("url") or s.get("link") or "Source")
+            url = s.get("value") or s.get("url") or s.get("link")
+            if url:
+                refs_lines.append(f"- [{label}]({url})")
+        if refs_lines:
+            result.content = result.content.strip() + "\n\nNguồn tham khảo:\n" + "\n".join(refs_lines)
 
     return {
         "finalize_answer": {"status": "done"},

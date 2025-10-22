@@ -5,9 +5,10 @@ interface LayoutProps {
   children: React.ReactNode;
   right: React.ReactNode;
   width?: number; // width of aside in px
+  onNewChat?: () => void;
 }
 
-export default function Layout({ children, right, width = 420 }: LayoutProps) {
+export default function Layout({ children, right, width = 420, onNewChat }: LayoutProps) {
   const hasRight = Boolean(right);
   const [showRight, setShowRight] = useState(hasRight);
   const [showChatHistory, setShowChatHistory] = useState(false);
@@ -49,7 +50,10 @@ export default function Layout({ children, right, width = 420 }: LayoutProps) {
 
   const handleNewChat = () => {
     setCurrentSessionId('');
-    // Trong thực tế, sẽ tạo session mới và reset chat
+    // Gọi callback từ parent để reset hoàn toàn
+    if (onNewChat) {
+      onNewChat();
+    }
     console.log('Starting new chat');
   };
 
@@ -87,7 +91,8 @@ export default function Layout({ children, right, width = 420 }: LayoutProps) {
         className="app-shell__main h-full overflow-hidden"
         style={{ 
           paddingRight: hasRight && showRight ? width : 0,
-          paddingLeft: showChatHistory ? 320 : 0
+          paddingLeft: showChatHistory ? 320 : 0,
+          paddingBottom: 40 // Space for footer
         }}
       >
         {children}
@@ -99,6 +104,15 @@ export default function Layout({ children, right, width = 420 }: LayoutProps) {
           <div className="app-shell__aside-inner custom-scroll">{right}</div>
         </aside>
       )}
+
+      {/* FOOTER: fixed at bottom */}
+      <footer className="fixed bottom-0 left-0 right-0 z-10 bg-neutral-900/80 backdrop-blur-sm border-t border-neutral-700/50">
+        <div className="text-center py-2">
+          <p className="text-xs text-neutral-500">
+            Powered by Locaith Solution Tech and Partner 2025.
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }

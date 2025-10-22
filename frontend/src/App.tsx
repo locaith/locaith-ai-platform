@@ -21,8 +21,10 @@ export default function App() {
   const hasFinalizeEventOccurredRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [imageMessages, setImageMessages] = useState<Message[]>([]);
+  const [rightPanelKey, setRightPanelKey] = useState(0); // Key để force reset RightPanel
   // NEW: global input mode to keep Image Mode persistent across views
   const [globalInputMode, setGlobalInputMode] = useState<"chat" | "image">("chat");
+  const [hasEverHadMessages, setHasEverHadMessages] = useState(false);
   // Word preview state
   const [wordPreviewActive, setWordPreviewActive] = useState(false);
   const [wordDocument, setWordDocument] = useState<any | null>(null);
@@ -41,6 +43,12 @@ export default function App() {
       return "http://127.0.0.1:2024"; // Fallback to dev server URL
     }
   };
+
+  // Retry/backoff state for stream stability
+  const lastPayloadRef = useRef<any>(null);
+  const retryAttemptRef = useRef(0);
+  const retryTimerRef = useRef<number | undefined>(undefined);
+  const MAX_RETRIES = 3;
 
   const thread = useStream<{
     messages: Message[];
@@ -99,6 +107,7 @@ export default function App() {
         processedEvent = {
           title: "Finalizing Answer",
           data: "Composing and presenting the final answer.",
+          sources: Array.isArray(event.sources_gathered) ? event.sources_gathered : [],
         };
         hasFinalizeEventOccurredRef.current = true;
       } else if (event.llm) {
@@ -121,25 +130,78 @@ export default function App() {
         msg.includes("ERR_ABORTED") ||
         msg.includes("The user aborted a request") ||
         msg.includes("NetworkError when attempting to fetch resource") ||
-        msg.includes("Failed to fetch");
+        msg.includes("Failed to fetch") ||
+        msg.includes("net::ERR_ABORTED") ||
+        msg.includes("The operation was aborted");
+      
+      const isNetworkError = 
+        msg.includes("NetworkError") ||
+        msg.includes("fetch") ||
+        msg.includes("ECONNREFUSED") ||
+        msg.includes("ENOTFOUND") ||
+        msg.includes("timeout") ||
+        msg.includes("502") ||
+        msg.includes("503") ||
+        msg.includes("504");
+        
       if (isAbort) {
         console.info("Stream aborted/restarted (ignored):", msg);
-        return; // Đừng hiển thị lỗi abort ra UI
+        return; // don't surface aborts
       }
+      
+      if (isNetworkError) {
+        console.warn("Network error, will retry with backoff:", msg);
+        // schedule exponential backoff retry
+        if (retryTimerRef.current) {
+          clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = undefined;
+        }
+        const attempt = retryAttemptRef.current;
+        if (attempt < MAX_RETRIES) {
+          const delay = Math.min(8000, 500 * Math.pow(2, attempt));
+          console.info(`[stream] retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          retryTimerRef.current = window.setTimeout(() => {
+            try { thread.stop(); } catch {}
+            if (lastPayloadRef.current) {
+              try { thread.submit(lastPayloadRef.current); } catch (e) {
+                console.warn("Immediate resubmit failed", e);
+              }
+            }
+            retryAttemptRef.current = attempt + 1;
+          }, delay);
+        }
+        return;
+      }
+      
+      // Only show critical errors
+      console.error("Stream error:", error);
       setError(msg);
     },
   });
 
+  // Clear any pending retry timer on unmount
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = undefined;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (scrollAreaRef.current) {
-      const scrollViewport = scrollAreaRef.current.querySelector(
-        "[data-radix-scroll-area-viewport]"
-      );
+      const scrollViewport = (
+        scrollAreaRef.current.querySelector('[data-slot="scroll-area-viewport"]') ||
+        scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
+      ) as HTMLElement | null;
       if (scrollViewport) {
-        (scrollViewport as HTMLElement).scrollTop = (scrollViewport as HTMLElement).scrollHeight;
+        requestAnimationFrame(() => {
+          scrollViewport.scrollTop = scrollViewport.scrollHeight;
+        });
       }
     }
-  }, [thread.messages]);
+  }, [thread.messages, imageMessages]);
 
   // Listen to Word tool open event to show preview
   useEffect(() => {
@@ -200,9 +262,14 @@ export default function App() {
   const handleSubmit = useCallback(
     (submittedInputValue: string, effort: string) => {
       if (!submittedInputValue.trim()) return;
+      
+      // Reset tất cả state liên quan để tránh nhấp nháy và trùng lặp
       setProcessedEventsTimeline([]);
+      setError(null);
+      setRightPanelKey(prev => prev + 1); // Force reset RightPanel
       hasFinalizeEventOccurredRef.current = false;
-
+      setHasEverHadMessages(true);
+      
       // convert effort to initial_search_query_count and max_research_loops
       // Optimized for performance:
       // Low: 1 initial query, 1 loop max
@@ -225,27 +292,80 @@ export default function App() {
           break;
       }
 
+      // Reset hoàn toàn chat history để tránh trộn lẫn với tin nhắn cũ
       const newMessages: Message[] = [
-        ...(thread.messages || []),
         {
           type: "human",
           content: submittedInputValue,
           id: Date.now().toString(),
         },
       ];
-      thread.submit({
+      
+      // Dừng stream hiện tại và submit ngay lập tức (không cần delay)
+      try {
+        thread.stop();
+      } catch (e) {
+        console.info("No active stream to stop");
+      }
+      
+      // Build payload and reset retry state
+      const payload = {
         messages: newMessages,
         initial_search_query_count: initial_search_query_count,
         max_research_loops: max_research_loops,
-        reasoning_model: "gemini-2.0-flash-exp", // Auto-select optimal model
-      });
+        reasoning_model: "gemini-2.5-pro", // Sử dụng model chính xác cho reasoning
+      };
+      lastPayloadRef.current = payload;
+      retryAttemptRef.current = 0;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = undefined;
+      }
+      
+      // Submit ngay lập tức để tránh race condition
+      thread.submit(payload);
     },
     [thread]
   );
 
   const handleCancel = useCallback(() => {
+    try { thread.stop(); } catch {}
+    // Không reload trang để tránh flicker; chỉ hủy stream hiện tại
+    setError(null);
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = undefined;
+    }
+  }, [thread]);
+
+  const handleNewChat = useCallback(() => {
+    // Reset hoàn toàn tất cả state
     thread.stop();
-    window.location.reload();
+    setProcessedEventsTimeline([]);
+    setError(null);
+    setRightPanelKey(prev => prev + 1); // Force reset RightPanel
+    setImageMessages([]);
+    setHasEverHadMessages(false);
+    hasFinalizeEventOccurredRef.current = false;
+    
+    // Reset word preview
+    setWordPreviewActive(false);
+    setWordDocument(null);
+    setWordError(null);
+    setWordIsGenerating(false);
+    
+    // Clear retry state
+    lastPayloadRef.current = null;
+    retryAttemptRef.current = 0;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = undefined;
+    }
+    
+    // Clear thread messages
+    thread.clear();
+    
+    console.log('Chat reset completely');
   }, [thread]);
 
 
@@ -388,11 +508,53 @@ export default function App() {
      return allMessages;
    }, [thread.messages, thread.isLoading, compressMessages, imageMessages]);
 
+  // Track if we've ever had messages to prevent flashing back to welcome screen
+  useEffect(() => {
+    if (stableMessages.length > 0) {
+      setHasEverHadMessages(true);
+    }
+  }, [stableMessages.length]);
+
+  // Get the most recent image URL from imageMessages for editing
+  const getRecentImageUrl = useCallback(() => {
+    // Find the most recent AI image message
+    const aiImageMessages = imageMessages
+      .filter(msg => msg.type === "ai" && msg.id?.startsWith("ai-img-") && msg.content)
+      .sort((a, b) => {
+        // Sort by timestamp (extracted from ID)
+        const getTs = (id?: string) => {
+          if (!id) return 0;
+          const parts = id.split('-');
+          const last = parts[parts.length - 1];
+          const num = parseInt(last);
+          return isNaN(num) ? 0 : num;
+        };
+        return getTs(b.id) - getTs(a.id); // Most recent first
+      });
+
+    if (aiImageMessages.length === 0) return null;
+
+    const mostRecentMessage = aiImageMessages[0];
+    const content = typeof mostRecentMessage.content === "string" 
+      ? mostRecentMessage.content 
+      : JSON.stringify(mostRecentMessage.content);
+
+    // Extract image URL from markdown content
+    const imageUrlMatch = content.match(/!\[.*?\]\((.*?)\)/);
+    if (imageUrlMatch && imageUrlMatch[1]) {
+      return imageUrlMatch[1];
+    }
+
+    return null;
+  }, [imageMessages]);
+
   return (
     <Layout
+      onNewChat={handleNewChat}
       right={
         (usedSearch || wordPreviewActive) ? (
           <RightPanel
+            key={rightPanelKey}
             processedEvents={processedEventsTimeline}
             isLoading={thread.isLoading}
             wordPreviewActive={wordPreviewActive}
@@ -403,7 +565,7 @@ export default function App() {
         ) : null
      }
     >
-      {stableMessages.length === 0 ? (
+      {stableMessages.length === 0 && !hasEverHadMessages ? (
         <div className="app-shell__welcome">
           <WelcomeScreen
             handleSubmit={handleSubmit}
@@ -414,6 +576,8 @@ export default function App() {
             // pass global input mode to InputForm in Welcome view
             mode={globalInputMode}
             onModeChange={setGlobalInputMode}
+            // pass recent image for editing
+            recentPreview={getRecentImageUrl()}
           />
         </div>
       ) : error ? (
@@ -447,6 +611,8 @@ export default function App() {
             // controlled input mode props
             inputMode={globalInputMode}
             onModeChange={setGlobalInputMode}
+            // pass recent image for editing
+            recentPreview={getRecentImageUrl()}
           />
         </div>
       )}

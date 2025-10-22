@@ -12,6 +12,9 @@ interface WelcomeScreenProps {
   // NEW: controlled input mode from App
   mode?: "chat" | "image";
   onModeChange?: (mode: "chat" | "image") => void;
+  // NEW: recent image for editing
+  recentPreview?: string | null;
+  lastImageUrl?: string | null;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
@@ -22,6 +25,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   onImageGenerated,
   mode,
   onModeChange,
+  recentPreview,
+  lastImageUrl,
 }) => (
   <div className="h-full flex flex-col items-center justify-center text-center px-4 flex-1 w-full max-w-3xl mx-auto gap-4">
     <div>
@@ -42,10 +47,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           onImageGenerated={onImageGenerated}
           mode={mode}
           onModeChange={onModeChange}
+          recentPreview={recentPreview}
+          lastImageUrl={lastImageUrl}
         />
     </div>
-    <p className="text-xs text-neutral-500">
-      Powered by Locaith Solution Tech and Partner 2025.
-    </p>
   </div>
 );

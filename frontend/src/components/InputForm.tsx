@@ -26,6 +26,9 @@ interface InputFormProps {
   onModeChange?: (mode: "chat" | "image") => void;
   onImageStart?: (imageData: { id: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
   onImageGenerated?: (imageData: { id: string; dataUrl: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  // NEW: Props for recent image data to enable editing
+  recentPreview?: string | null;
+  lastImageUrl?: string | null;
 }
 
 export const InputForm: React.FC<InputFormProps> = ({
@@ -37,6 +40,8 @@ export const InputForm: React.FC<InputFormProps> = ({
   onModeChange,
   onImageStart,
   onImageGenerated,
+  recentPreview,
+  lastImageUrl,
 }) => {
   const [internalInputValue, setInternalInputValue] = useState("");
   const [effort, setEffort] = useState("medium");
@@ -60,23 +65,22 @@ export const InputForm: React.FC<InputFormProps> = ({
   const [autoImageIntentEnabled, setAutoImageIntentEnabled] = useState<boolean>(true);
   const [justSubmitted, setJustSubmitted] = useState<boolean>(false);
   const [recentImageGenerated, setRecentImageGenerated] = useState<boolean>(false);
+  const [lastGeneratedImageId, setLastGeneratedImageId] = useState<string | null>(null);
   
   // Auto-set mode when image intent is detected
   useEffect(() => {
-    if (autoImageIntentEnabled && !attachmentFile && !justSubmitted) {
+    // If user has generated an image, disable auto-detection completely to avoid confusion
+    if (lastGeneratedImageId || !autoImageIntentEnabled) {
+      return; // Don't auto-switch modes when user has generated an image or auto-detection is disabled
+    }
+    
+    if (!attachmentFile && !justSubmitted) {
       const hasImageIntent = internalInputValue.trim() && isImageIntent(internalInputValue) && !isAskAboutImages(internalInputValue);
       
       if (hasImageIntent && mode !== "image") {
         setMode("image");
-      } else if (!hasImageIntent && mode === "image" && !imageLoading) {
-        // Only reset to chat when user TYPES non-image content; do NOT reset on empty input
-        if (internalInputValue.trim()) {
-          const nonImageOrAsk = !isImageIntent(internalInputValue) || isAskAboutImages(internalInputValue);
-          if (nonImageOrAsk) {
-            setMode("chat");
-          }
-        }
       }
+      // Note: Removed auto-switch to chat mode to maintain image mode persistence
     }
     
     // Reset justSubmitted flag when user starts typing again
@@ -91,24 +95,54 @@ export const InputForm: React.FC<InputFormProps> = ({
         setRecentImageGenerated(false);
       }
     }
-  }, [internalInputValue, autoImageIntentEnabled, mode, attachmentFile, justSubmitted, imageLoading, recentImageGenerated]);
+  }, [internalInputValue, autoImageIntentEnabled, mode, attachmentFile, justSubmitted, imageLoading, recentImageGenerated, lastGeneratedImageId]);
 
   // Intent detection: auto choose image tool like ChatGPT
   const isImageIntent = (text: string) => {
     const t = (text || "").toLowerCase();
+    
+    // Exclude phrases that contain image keywords but are not image creation requests
+    const excludePatterns = [
+      "hình như",
+      "hình thức",
+      "hình dạng",
+      "hình thành",
+      "hình phạt",
+      "hình ảnh về",
+      "ảnh hưởng",
+      "ảnh của",
+      "ảnh trong",
+      "ảnh này",
+      "ảnh đó",
+      "ảnh nào",
+      "photo của",
+      "photo trong",
+      "photo này",
+      "photo đó",
+      "image của",
+      "image trong",
+      "image này",
+      "image đó",
+    ];
+    
+    // Check if text contains exclude patterns
+    if (excludePatterns.some(pattern => t.includes(pattern))) {
+      return false;
+    }
+    
     const keywords = [
       "tạo ảnh",
-      "tạo hình",
+      "tạo hình ảnh",
       "vẽ ảnh",
       "vẽ hình",
-      "image",
-      "ảnh",
-      "photo",
-      "hình",
       "chỉnh sửa ảnh",
       "sửa ảnh",
       "edit image",
       "generate image",
+      "create image",
+      "draw image",
+      "make image",
+      "design image",
     ];
     return keywords.some((k) => t.includes(k));
   };
@@ -147,6 +181,45 @@ export const InputForm: React.FC<InputFormProps> = ({
       "design",
     ];
     return isImageIntent(t) && (askWords.some((k) => t.includes(k)) || t.includes("?"));
+  };
+
+  // Detect if user wants to edit the current image
+  const isEditIntent = (text: string) => {
+    const t = (text || "").toLowerCase();
+    const editKeywords = [
+      "sửa",
+      "chỉnh sửa", 
+      "thay đổi",
+      "edit",
+      "modify",
+      "change",
+      "điều chỉnh",
+      "cải thiện",
+      "làm cho",
+      "thêm",
+      "bớt",
+      "xóa",
+      "remove",
+      "add",
+      "improve",
+      "better",
+      "tốt hơn",
+      "đẹp hơn",
+      "rõ hơn",
+      "sáng hơn",
+      "tối hơn",
+      "lớn hơn",
+      "nhỏ hơn",
+      "đổi",
+      "fix",
+      "adjust",
+      "update",
+      "cho thêm",
+      "thêm vào",
+      "bỏ đi",
+      "nâng cấp"
+    ];
+    return editKeywords.some(keyword => t.includes(keyword));
   };
 
   // Call backend intent classifier for ambiguous cases
@@ -198,6 +271,9 @@ export const InputForm: React.FC<InputFormProps> = ({
       // Ensure UI switches to image mode so preview panel is visible
       if (mode !== "image") setMode("image");
 
+      // Determine if this should be an edit operation
+      const shouldEdit = !!attachmentFile || (lastGeneratedImageId && isEditIntent(trimmed));
+      
       // Immediately emit start event so chat shows user + AI placeholder
       const opId = `${Date.now()}`;
       if (onImageStart) {
@@ -205,7 +281,7 @@ export const InputForm: React.FC<InputFormProps> = ({
           id: opId,
           prompt: trimmed,
           aspectRatio,
-          isEdit: !!attachmentFile,
+          isEdit: shouldEdit,
           originalFile: attachmentFile || undefined,
         });
       }
@@ -215,11 +291,58 @@ export const InputForm: React.FC<InputFormProps> = ({
         setImagePreview(null);
         let dataUrl = "";
         let lastJson: any = null; // giữ JSON để hiển thị lý do nếu không có ảnh
-        if (attachmentFile) {
+        if (shouldEdit) {
           const fd = new FormData();
           fd.append("prompt", trimmed);
           fd.append("aspect_ratio", aspectRatio);
-          fd.append("file", attachmentFile);
+          
+          // Priority order for image source: attachmentFile > recentPreview > lastImageUrl > imagePreview
+          if (attachmentFile) {
+            fd.append("file", attachmentFile);
+            console.info('[InputForm] Using uploaded file for edit');
+          } 
+          else if (recentPreview) {
+            try {
+              // Convert data URL to blob
+              const response = await fetch(recentPreview);
+              const blob = await response.blob();
+              const file = new File([blob], `recent_image.png`, { type: 'image/png' });
+              fd.append("file", file);
+              console.info('[InputForm] Using recentPreview for edit');
+            } catch (err) {
+              console.error('[InputForm] Failed to convert recentPreview to file:', err);
+              throw new Error("Không thể sử dụng ảnh gần nhất để chỉnh sửa");
+            }
+          }
+          else if (lastImageUrl) {
+            try {
+              // Convert data URL to blob
+              const response = await fetch(lastImageUrl);
+              const blob = await response.blob();
+              const file = new File([blob], `last_image.png`, { type: 'image/png' });
+              fd.append("file", file);
+              console.info('[InputForm] Using lastImageUrl for edit');
+            } catch (err) {
+              console.error('[InputForm] Failed to convert lastImageUrl to file:', err);
+              throw new Error("Không thể sử dụng ảnh gần nhất để chỉnh sửa");
+            }
+          }
+          else if (imagePreview && lastGeneratedImageId) {
+            try {
+              // Convert data URL to blob
+              const response = await fetch(imagePreview);
+              const blob = await response.blob();
+              const file = new File([blob], `image_${lastGeneratedImageId}.png`, { type: 'image/png' });
+              fd.append("file", file);
+              console.info('[InputForm] Using imagePreview for edit', { imageId: lastGeneratedImageId });
+            } catch (err) {
+              console.error('[InputForm] Failed to convert imagePreview to file:', err);
+              throw new Error("Không thể sử dụng ảnh gần nhất để chỉnh sửa");
+            }
+          }
+          else {
+            throw new Error("Không có ảnh nào để chỉnh sửa. Vui lòng tạo ảnh mới hoặc tải lên ảnh.");
+          }
           const url = import.meta.env.DEV ? "/api/image/edit" : "http://localhost:8123/api/image/edit";
 
           // Validate URL before fetch
@@ -285,13 +408,19 @@ export const InputForm: React.FC<InputFormProps> = ({
               dataUrl,
               prompt: trimmed,
               aspectRatio,
-              isEdit: !!attachmentFile,
+              isEdit: shouldEdit,
               originalFile: attachmentFile || undefined,
             });
           }
 
           // Mark that we just generated an image to prevent mode reset
           setRecentImageGenerated(true);
+          
+          // Track the last generated image for edit functionality
+          setLastGeneratedImageId(opId);
+          
+          // Disable auto-detection after successful image generation to avoid confusion
+          setAutoImageIntentEnabled(false);
           
           // Clear input after successful image generation to allow new prompts
           setInternalInputValue("");
@@ -309,6 +438,11 @@ export const InputForm: React.FC<InputFormProps> = ({
         console.error(err);
         const msg = (err as any)?.message || "Tạo/Chỉnh sửa ảnh thất bại. Vui lòng thử lại.";
         alert(msg);
+        // Reset to chat mode on error to prevent further image generation attempts
+        setMode("chat");
+        setAutoImageIntentEnabled(true);
+        setRecentImageGenerated(false);
+        setLastGeneratedImageId(null);
       } finally {
         setImageLoading(false);
       }
@@ -324,6 +458,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   const handleToolClick = (tool: "word" | "image" | "video" | "marketing" | "website") => {
     if (tool === "image") {
       setMode("image");
+      setAutoImageIntentEnabled(false); // Disable auto-detection when manually activated
       return;
     }
     if (tool === "word") {
@@ -429,6 +564,7 @@ export const InputForm: React.FC<InputFormProps> = ({
                   setAutoImageIntentEnabled(true);
                   setJustSubmitted(false);
                   setRecentImageGenerated(false);
+                  setLastGeneratedImageId(null);
                 }}
                 className="flex items-center justify-center w-8 h-8 p-0 bg-neutral-700 border-neutral-600 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-xl"
                 title="Tắt chế độ tạo ảnh"
@@ -543,21 +679,7 @@ export const InputForm: React.FC<InputFormProps> = ({
         )}
       </div>
 
-      {/* Image preview panel */}
-      {showImageControls && imagePreview && (
-        <div className="mt-2 rounded-xl border border-neutral-700 bg-neutral-800 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-neutral-300">Preview</span>
-            <a href={imagePreview} download={`locaith-image-${Date.now()}.png`} className="text-white text-xs no-underline hover:no-underline cursor-pointer bg-transparent hover:bg-transparent transition-none">
-              Tải về
-            </a>
-          </div>
-          <img src={imagePreview} alt="generated" className="max-h-[360px] w-auto rounded-md border border-neutral-700" />
-          {attachmentFile && (
-            <p className="text-[11px] text-neutral-400 mt-2">Ảnh đang chỉnh: {attachmentFile.name}</p>
-          )}
-        </div>
-      )}
+
     </form>
   );
 };

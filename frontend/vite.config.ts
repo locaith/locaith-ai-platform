@@ -14,11 +14,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // Proxy API requests to the backend server
+      // Proxy API requests to the FastAPI backend (uvicorn) running on port 8001
       "/api": {
-        target: "http://127.0.0.1:8123", // Backend server running on port 8123
+        target: "http://127.0.0.1:8001",
         changeOrigin: true,
-        // Optionally rewrite path if needed (e.g., remove /api prefix if backend doesn't expect it)
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },

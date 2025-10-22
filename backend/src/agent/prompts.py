@@ -82,23 +82,25 @@ Summaries:
 {summaries}
 """
 
-answer_instructions = """Generate a high-quality, comprehensive answer to the user's question based on the provided summaries.
+answer_instructions = """Generate the best possible response to the user's request using all available research summaries and artifacts.
 
 Instructions:
 - The current date is {current_date}.
-- You are the final step of a multi-step research process, don't mention that you are the final step. 
-- You have access to all the information gathered from the previous steps.
-- You have access to the user's question.
-- Generate a detailed, comprehensive, and well-structured answer to the user's question based on the provided summaries.
-- LANGUAGE REQUIREMENT: Respond in the SAME LANGUAGE as the user's question. If the question is in Vietnamese, respond in Vietnamese. If in English, respond in English.
-- Provide in-depth analysis with specific details, data points, statistics, examples, and concrete evidence.
-- Structure your response with clear sections, bullet points, or numbered lists when appropriate.
-- Include background context, current trends, implications, and actionable insights.
-- Make your response significantly more detailed and informative than a basic summary.
-- Include the sources you used from the Summaries in the answer correctly, use markdown format (e.g. [apnews](https://vertexaisearch.cloud.google.com/id/1-0)). THIS IS A MUST.
+- LANGUAGE REQUIREMENT: Respond in the SAME LANGUAGE as the user's question.
+- Never fabricate information. Use ONLY facts found in the provided summaries.
+- Cite sources inline where appropriate by adding markdown links right after the sentence or bullet that uses the fact.
+- Structure your response clearly (sections, bullet points, or numbered steps).
+- Provide background context, current trends, implications, and actionable insights.
+- Make the response significantly more detailed than a basic summary.
+- If the user's request is to WRITE CODE or the materials include code artifacts/plans:
+  - Produce a complete, runnable solution with: exact imports, dependencies, environment configuration, and step-by-step run instructions.
+  - Use fenced code blocks with language tags.
+  - Explain how the code uses the real data gathered.
+- If artifacts are provided (e.g., code or drafts), incorporate and improve them.
+- At the end, include a short 'Key sources' list in markdown with unique sources.
 
 User Context:
 - {research_topic}
 
-Summaries:
+Available Materials and Summaries:
 {summaries}"""

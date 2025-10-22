@@ -25,23 +25,36 @@ class ImageIntentResponse(BaseModel):
 
 def _keyword_confidence(text: str) -> tuple[list[str], float]:
     t = (text or "").lower()
+    
+    # Exclude patterns that contain image keywords but are not image creation requests
+    exclude_patterns = [
+        "hình như", "hình thức", "hình dạng", "hình thành", "hình phạt",
+        "ảnh hưởng", "ảnh của", "ảnh trong", "ảnh này", "ảnh đó", "ảnh nào",
+        "photo của", "photo trong", "photo này", "photo đó",
+        "image của", "image trong", "image này", "image đó",
+    ]
+    
+    # If text contains exclude patterns, heavily penalize
+    exclude_penalty = 0.0
+    for pattern in exclude_patterns:
+        if pattern in t:
+            exclude_penalty -= 0.5  # Heavy penalty
+    
     keywords = {
-        # create
-        "tạo": 0.25,
-        "tạo ảnh": 0.35,
-        "vẽ": 0.25,
+        # create - more specific keywords
+        "tạo ảnh": 0.40,
+        "tạo hình ảnh": 0.40,
+        "vẽ ảnh": 0.35,
+        "vẽ hình": 0.30,
         "render": 0.25,
-        "generate": 0.25,
-        "image": 0.15,
-        "ảnh": 0.15,
-        "photo": 0.15,
-        "hình": 0.15,
+        "generate image": 0.35,
+        "create image": 0.35,
+        "design image": 0.30,
         "giúp tôi tạo": 0.30,
         # edit
-        "chỉnh sửa": 0.25,
-        "sửa ảnh": 0.30,
-        "edit": 0.25,
-        "edit image": 0.30,
+        "chỉnh sửa ảnh": 0.35,
+        "sửa ảnh": 0.35,
+        "edit image": 0.35,
         # ask
         "cơ chế": -0.30,
         "hoạt động": -0.25,
@@ -58,6 +71,10 @@ def _keyword_confidence(text: str) -> tuple[list[str], float]:
         if k in t:
             hits.append(k)
             score += w
+    
+    # Apply exclude penalty
+    score += exclude_penalty
+    
     # Normalize confidence to [0,1]
     # Positive score indicates leaning to "create"; negative -> "ask"
     pos = max(score, 0.0)
