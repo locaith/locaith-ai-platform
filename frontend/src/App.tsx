@@ -376,37 +376,38 @@ export default function App() {
   return (
     <Layout
       right={
--        usedSearch ? (
-+        (usedSearch || wordPreviewActive) ? (
-           <RightPanel
-             processedEvents={processedEventsTimeline}
-             isLoading={thread.isLoading}
-+            wordPreviewActive={wordPreviewActive}
-+            wordDocument={wordDocument}
-+            wordIsGenerating={wordIsGenerating}
-+            wordError={wordError}
-           />
-         ) : null
-      }
+        (usedSearch || wordPreviewActive) ? (
+          <RightPanel
+            processedEvents={processedEventsTimeline}
+            isLoading={thread.isLoading}
+            wordPreviewActive={wordPreviewActive}
+            wordDocument={wordDocument}
+            wordIsGenerating={wordIsGenerating}
+            wordError={wordError}
+          />
+        ) : null
+     }
     >
       {stableMessages.length === 0 ? (
-         <div className="h-full w-full pt-4 px-4">
-           <WelcomeScreen
-             handleSubmit={handleSubmit}
-             isLoading={thread.isLoading}
-             onCancel={handleCancel}
-             onImageStart={handleImageStart}
-             onImageGenerated={handleImageGenerated}
-             // pass global input mode to InputForm in Welcome view
-             mode={globalInputMode}
-             onModeChange={setGlobalInputMode}
-           />
-         </div>
-       ) : error ? (
-        <div className="flex flex-col items-center justify-center h-full">
-          <div className="flex flex-col items-center justify-center gap-4">
+        <div className="app-shell__welcome">
+          <WelcomeScreen
+            handleSubmit={handleSubmit}
+            isLoading={thread.isLoading}
+            onCancel={handleCancel}
+            onImageStart={handleImageStart}
+            onImageGenerated={handleImageGenerated}
+            // pass global input mode to InputForm in Welcome view
+            mode={globalInputMode}
+            onModeChange={setGlobalInputMode}
+          />
+        </div>
+      ) : error ? (
+        <div className="app-shell__error">
+          <div className="app-shell__error-card">
             <h1 className="text-2xl text-red-400 font-bold">Error</h1>
-            <p className="text-red-400">{JSON.stringify(error)}</p>
+            <p className="text-red-400 text-sm md:text-base">
+              {JSON.stringify(error)}
+            </p>
 
             <Button
               variant="destructive"
@@ -417,7 +418,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div className="h-full w-full pt-4 px-4">
+        <div className="app-shell__conversation">
           <ChatMessagesView
             messages={stableMessages}
             isLoading={thread.isLoading}

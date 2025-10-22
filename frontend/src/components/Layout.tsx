@@ -11,37 +11,65 @@ export default function Layout({ children, right, width = 420 }: LayoutProps) {
   const [showRight, setShowRight] = useState(hasRight);
 
   useEffect(() => {
-    // Đồng bộ trạng thái hiển thị panel phải theo sự hiện diện của nội dung 'right'
+    // keep the toggle state in sync with the presence of the right panel content
     setShowRight(Boolean(right));
   }, [right]);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    const pointerMedia = window.matchMedia("(pointer: fine)");
+    const setCenter = () => {
+      root.style.setProperty("--pointer-x", "50vw");
+      root.style.setProperty("--pointer-y", "50vh");
+    };
+    const updatePointer = (event: PointerEvent) => {
+      root.style.setProperty("--pointer-x", `${event.clientX}px`);
+      root.style.setProperty("--pointer-y", `${event.clientY}px`);
+    };
+
+    setCenter();
+
+    if (pointerMedia.matches) {
+      window.addEventListener("pointermove", updatePointer);
+    }
+
+    return () => {
+      window.removeEventListener("pointermove", updatePointer);
+    };
+  }, []);
+
   return (
-    <div className="h-screen w-screen overflow-hidden bg-neutral-900 text-neutral-100">
+    <div className="app-shell">
+      <div className="app-shell__background" aria-hidden="true">
+        <div className="app-shell__grid" />
+        <div className="app-shell__orb app-shell__orb--violet" />
+        <div className="app-shell__orb app-shell__orb--cyan" />
+        <div className="app-shell__orb app-shell__orb--mint" />
+        <div className="app-shell__pointer" />
+      </div>
+
       {hasRight && (
         <button
           onClick={() => setShowRight((v) => !v)}
-          className="fixed right-3 top-3 z-50 rounded-full bg-neutral-800/80 px-3 py-2 text-sm hover:bg-neutral-700"
+          className="app-shell__toggle"
           aria-label="Toggle insights panel"
         >
-          {showRight ? "Ẩn" : "Hiện"}
+          {showRight ? "Hide panel" : "Show panel"}
         </button>
       )}
 
-      {/* MAIN: chừa padding phải đúng bằng width aside khi panel mở */}
+      {/* MAIN: adjust right padding when insights panel is visible */}
       <main
-        className="h-full overflow-hidden"
+        className="app-shell__main h-full overflow-hidden"
         style={{ paddingRight: hasRight && showRight ? width : 0 }}
       >
         {children}
       </main>
 
-      {/* RIGHT: aside cố định, dính mép phải */}
+      {/* RIGHT: fixed glassmorphism panel on the right side */}
       {hasRight && showRight && (
-        <aside
-          className="fixed right-0 top-0 z-40 h-screen border-l border-neutral-800 bg-neutral-950/60 backdrop-blur-sm"
-          style={{ width }}
-        >
-          <div className="h-full overflow-y-auto p-4 custom-scroll">{right}</div>
+        <aside className="app-shell__aside" style={{ width }}>
+          <div className="app-shell__aside-inner custom-scroll">{right}</div>
         </aside>
       )}
     </div>
