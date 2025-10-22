@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { ChatHistory } from './ChatHistory';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -9,6 +10,8 @@ interface LayoutProps {
 export default function Layout({ children, right, width = 420 }: LayoutProps) {
   const hasRight = Boolean(right);
   const [showRight, setShowRight] = useState(hasRight);
+  const [showChatHistory, setShowChatHistory] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string>('1');
 
   useEffect(() => {
     // keep the toggle state in sync with the presence of the right panel content
@@ -38,6 +41,18 @@ export default function Layout({ children, right, width = 420 }: LayoutProps) {
     };
   }, []);
 
+  const handleSessionSelect = (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+    // Trong thực tế, sẽ load lại cuộc trò chuyện từ sessionId
+    console.log('Selected session:', sessionId);
+  };
+
+  const handleNewChat = () => {
+    setCurrentSessionId('');
+    // Trong thực tế, sẽ tạo session mới và reset chat
+    console.log('Starting new chat');
+  };
+
   return (
     <div className="app-shell">
       <div className="app-shell__background" aria-hidden="true">
@@ -47,6 +62,15 @@ export default function Layout({ children, right, width = 420 }: LayoutProps) {
         <div className="app-shell__orb app-shell__orb--mint" />
         <div className="app-shell__pointer" />
       </div>
+
+      {/* Chat History Sidebar */}
+      <ChatHistory
+        isOpen={showChatHistory}
+        onToggle={() => setShowChatHistory(!showChatHistory)}
+        currentSessionId={currentSessionId}
+        onSessionSelect={handleSessionSelect}
+        onNewChat={handleNewChat}
+      />
 
       {hasRight && (
         <button
@@ -61,7 +85,10 @@ export default function Layout({ children, right, width = 420 }: LayoutProps) {
       {/* MAIN: adjust right padding when insights panel is visible */}
       <main
         className="app-shell__main h-full overflow-hidden"
-        style={{ paddingRight: hasRight && showRight ? width : 0 }}
+        style={{ 
+          paddingRight: hasRight && showRight ? width : 0,
+          paddingLeft: showChatHistory ? 320 : 0
+        }}
       >
         {children}
       </main>

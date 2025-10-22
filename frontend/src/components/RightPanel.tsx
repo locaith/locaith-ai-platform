@@ -178,30 +178,139 @@ const ArtifactsPanel: React.FC<{ artifacts: any[] }>= ({ artifacts }) => {
   );
 };
 
-export const RightPanel: React.FC<RightPanelProps> = ({ processedEvents, isLoading, wordPreviewActive, wordDocument, wordError, wordIsGenerating }) => {
-  const plan = usePlannerData(processedEvents);
-  const artifacts = useArtifacts(processedEvents);
-  const dev = useDevMode();
+// Shimmer effect component for thinking state
+const ShimmerEffect: React.FC = () => (
+  <div className="animate-pulse">
+    <div className="space-y-2">
+      <div className="h-3 bg-neutral-700 rounded w-3/4"></div>
+      <div className="h-3 bg-neutral-700 rounded w-1/2"></div>
+      <div className="h-3 bg-neutral-700 rounded w-5/6"></div>
+    </div>
+  </div>
+);
 
+// Extract sources from processed events
+function extractSources(processedEvents: ProcessedEvent[]): Array<{url: string, title: string}> {
+  const sources: Array<{url: string, title: string}> = [];
+  
+  processedEvents.forEach(event => {
+    if (event.sources && Array.isArray(event.sources)) {
+      event.sources.forEach((source: any) => {
+        if (source.url && source.title) {
+          sources.push({
+            url: source.url,
+            title: source.title
+          });
+        }
+      });
+    }
+  });
+  
+  // Remove duplicates based on URL
+  const uniqueSources = sources.filter((source, index, self) => 
+    index === self.findIndex(s => s.url === source.url)
+  );
+  
+  return uniqueSources;
+}
+
+// Get current thinking status
+function getThinkingStatus(processedEvents: ProcessedEvent[], isLoading: boolean): string {
+  if (!isLoading) {
+    return "Hoàn thành";
+  }
+  
+  if (processedEvents.length === 0) {
+    return "Đang khởi tạo...";
+  }
+  
+  const lastEvent = processedEvents[processedEvents.length - 1];
+  
+  switch (lastEvent.title) {
+    case "Generating Search Queries":
+      return "Đang tạo câu hỏi tìm kiếm...";
+    case "Web Research":
+      return "Đang nghiên cứu trên web...";
+    case "Reflection":
+      return "Đang phân tích kết quả...";
+    case "Finalizing Answer":
+      return "Đang hoàn thiện câu trả lời...";
+    default:
+      return "Đang xử lý...";
+  }
+}
+
+export const RightPanel: React.FC<RightPanelProps> = ({ 
+  processedEvents, 
+  isLoading, 
+  wordPreviewActive, 
+  wordDocument, 
+  wordError, 
+  wordIsGenerating 
+}) => {
+  const sources = extractSources(processedEvents);
+  const thinkingStatus = getThinkingStatus(processedEvents, isLoading);
+  
   return (
-    <div className="space-y-4">
+    <div className="bg-neutral-800/50 backdrop-blur-sm border border-neutral-700/50 rounded-lg p-4 space-y-6">
       {/* Word preview appears at the top when active */}
       {wordPreviewActive && (
-        <WordPreviewPanel documentJson={wordDocument} error={wordError || undefined} isGenerating={!!wordIsGenerating} />
+        <div className="mb-4">
+          <h3 className="text-sm font-medium text-neutral-200 mb-3">Word Preview</h3>
+          <div className="text-xs text-neutral-400">
+            {wordError ? (
+              <div className="text-red-400">{wordError}</div>
+            ) : wordIsGenerating ? (
+              <div className="text-neutral-300">Đang tạo tài liệu...</div>
+            ) : wordDocument ? (
+              <div className="text-neutral-300">Tài liệu đã sẵn sàng</div>
+            ) : (
+              <div className="text-neutral-500">Chưa có tài liệu</div>
+            )}
+          </div>
+        </div>
       )}
 
-      {/* Orchestrator flow indicator remains minimal */}
-      <OrchestratorIndicator processedEvents={processedEvents} isLoading={isLoading} />
-      {/* Sources section is always shown when right panel is visible */}
-      <SearchResultsPanel processedEvents={processedEvents} isLoading={isLoading} />
+      {/* Thinking Section */}
+      <div>
+        <h3 className="text-sm font-medium text-neutral-200 mb-3">Thinking</h3>
+        <div className="text-xs text-neutral-400">
+          {isLoading ? (
+            <div className="space-y-3">
+              <div className="text-neutral-300">{thinkingStatus}</div>
+              <ShimmerEffect />
+            </div>
+          ) : (
+            <div className="text-neutral-300">
+              {processedEvents.length > 0 ? "Đã hoàn thành phân tích" : "Chưa có hoạt động"}
+            </div>
+          )}
+        </div>
+      </div>
 
-      {/* Plan + Artifacts ONLY visible in dev mode */}
-      {dev && <PlanPanel plan={plan} />}
-      {dev && <ArtifactsPanel artifacts={artifacts} />}
-
-      {/* Footer badges */}
-      <div className="flex items-center gap-2">
-        <PolicyBadge />
+      {/* Sources Section */}
+      <div>
+        <h3 className="text-sm font-medium text-neutral-200 mb-3">Sources</h3>
+        <div className="space-y-2">
+          {sources.length > 0 ? (
+            sources.map((source, index) => (
+              <a
+                key={index}
+                href={source.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors duration-200 truncate"
+                title={source.title}
+              >
+                {source.title}
+              </a>
+            ))
+          ) : (
+            <div className="text-xs text-neutral-500">
+              {isLoading ? "Đang tìm kiếm nguồn..." : "Không có nguồn nào"}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -357,18 +357,33 @@ export default function App() {
       processedMsgs = msgs.slice(0, -1); // ẩn bubble AI đang stream
     }
     
-    // Merge chat messages with image messages, sorted by timestamp
+    // Merge chat messages with image messages, maintaining chronological order
     const allMessages = [...compressMessages(processedMsgs), ...imageMessages];
-     allMessages.sort((a, b) => {
-       const getTs = (id?: string) => {
-         if (!id) return 0;
-         const parts = id.split('-');
-         const last = parts[parts.length - 1];
-         const num = parseInt(last);
-         return isNaN(num) ? 0 : num;
-       };
-       return getTs(a.id) - getTs(b.id);
-     });
+    
+    // Sort by creation order - maintain the natural order from the thread
+    // Only sort image messages relative to their position, don't reorder chat messages
+    allMessages.sort((a, b) => {
+      // If both are from the main thread, maintain their original order
+      const aIsFromThread = !a.id?.startsWith('ai-img-');
+      const bIsFromThread = !b.id?.startsWith('ai-img-');
+      
+      if (aIsFromThread && bIsFromThread) {
+        // Maintain original order for thread messages
+        const aIndex = processedMsgs.findIndex(m => m.id === a.id);
+        const bIndex = processedMsgs.findIndex(m => m.id === b.id);
+        return aIndex - bIndex;
+      }
+      
+      // For image messages, sort by timestamp
+      const getTs = (id?: string) => {
+        if (!id) return 0;
+        const parts = id.split('-');
+        const last = parts[parts.length - 1];
+        const num = parseInt(last);
+        return isNaN(num) ? 0 : num;
+      };
+      return getTs(a.id) - getTs(b.id);
+    });
      
      return allMessages;
    }, [thread.messages, thread.isLoading, compressMessages, imageMessages]);
