@@ -14,9 +14,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // Proxy API requests to the FastAPI backend (uvicorn) running on port 8001
+      // Proxy API requests to the LangGraph backend running on port 2024
       "/api": {
-        target: "http://127.0.0.1:8001",
+        target: "http://127.0.0.1:2024",
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },

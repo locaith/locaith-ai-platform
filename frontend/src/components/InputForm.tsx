@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { SquarePen, Brain, StopCircle, ArrowUp, Image as ImageIcon, Video, Wand2, Wrench, ChevronDown, Globe, PenTool, Paperclip, Download, X } from "lucide-react";
+import { SquarePen, Brain, StopCircle, ArrowUp, Image as ImageIcon, Video, Wand2, Wrench, ChevronDown, Globe, PenTool, Paperclip, X } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -16,6 +16,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+// Helper functions
+
 // Updated InputFormProps
 interface InputFormProps {
   onSubmit: (inputValue: string, effort: string) => void;
@@ -26,6 +28,7 @@ interface InputFormProps {
   onModeChange?: (mode: "chat" | "image") => void;
   onImageStart?: (imageData: { id: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
   onImageGenerated?: (imageData: { id: string; dataUrl: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  onError?: (errorMessage: string) => void;
   // NEW: Props for recent image data to enable editing
   recentPreview?: string | null;
   lastImageUrl?: string | null;
@@ -40,6 +43,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   onModeChange,
   onImageStart,
   onImageGenerated,
+  onError,
   recentPreview,
   lastImageUrl,
 }) => {
@@ -272,7 +276,20 @@ export const InputForm: React.FC<InputFormProps> = ({
       if (mode !== "image") setMode("image");
 
       // Determine if this should be an edit operation
-      const shouldEdit = !!attachmentFile || (lastGeneratedImageId && isEditIntent(trimmed));
+      // Check for: uploaded file OR (edit intent AND (lastGeneratedImageId OR recentPreview available))
+      const shouldEdit: boolean = !!attachmentFile || (isEditIntent(trimmed) && (!!lastGeneratedImageId || !!recentPreview || !!lastImageUrl || !!imagePreview));
+      
+      // Debug edit mode detection
+      console.log('[InputForm] Edit mode detection:', {
+        shouldEdit,
+        attachmentFile: !!attachmentFile,
+        lastGeneratedImageId,
+        isEditIntent: isEditIntent(trimmed),
+        trimmed,
+        recentPreview: !!recentPreview,
+        lastImageUrl: !!lastImageUrl,
+        imagePreview: !!imagePreview
+      });
       
       // Immediately emit start event so chat shows user + AI placeholder
       const opId = `${Date.now()}`;
@@ -292,6 +309,14 @@ export const InputForm: React.FC<InputFormProps> = ({
         let dataUrl = "";
         let lastJson: any = null; // giữ JSON để hiển thị lý do nếu không có ảnh
         if (shouldEdit) {
+          console.log('[InputForm] Edit mode - Available sources:', {
+            attachmentFile: !!attachmentFile,
+            recentPreview: !!recentPreview,
+            lastImageUrl: !!lastImageUrl,
+            imagePreview: !!imagePreview,
+            lastGeneratedImageId
+          });
+          
           const fd = new FormData();
           fd.append("prompt", trimmed);
           fd.append("aspect_ratio", aspectRatio);
@@ -432,17 +457,30 @@ export const InputForm: React.FC<InputFormProps> = ({
           const reason = Array.isArray(lastJson?.detail)
             ? lastJson.detail.map((d: any) => d?.msg || d).join("; ")
             : (lastJson?.detail || lastJson?.message || lastJson?.caption || (lastJson?.no_image ? "Model returned no image" : ""));
-          alert(reason ? `Không nhận được ảnh: ${reason}` : "Model không trả về ảnh. Có thể bị chặn bởi safety hoặc cấu hình không hợp lệ.");
+          const errorMsg = reason ? `Không nhận được ảnh: ${reason}` : "Model không trả về ảnh. Có thể bị chặn bởi safety hoặc cấu hình không hợp lệ.";
+          
+          if (onError) {
+            onError(`Xin lỗi, tôi không thể tạo ảnh này. ${errorMsg} Vui lòng thử lại với mô tả khác.`);
+          } else {
+            alert(errorMsg);
+          }
         }
       } catch (err) {
         console.error(err);
         const msg = (err as any)?.message || "Tạo/Chỉnh sửa ảnh thất bại. Vui lòng thử lại.";
-        alert(msg);
-        // Reset to chat mode on error to prevent further image generation attempts
-        setMode("chat");
-        setAutoImageIntentEnabled(true);
-        setRecentImageGenerated(false);
-        setLastGeneratedImageId(null);
+        
+        if (onError) {
+          onError(`Xin lỗi, có lỗi xảy ra khi tạo ảnh. Vui lòng thử lại sau.`);
+        } else {
+          alert(msg);
+        }
+        
+        // Keep image mode active - don't auto-disable on error
+        // User can manually exit image mode if needed
+        // setMode("chat");
+        // setAutoImageIntentEnabled(true);
+        // setRecentImageGenerated(false);
+        // setLastGeneratedImageId(null);
       } finally {
         setImageLoading(false);
       }
@@ -489,56 +527,69 @@ export const InputForm: React.FC<InputFormProps> = ({
 
   return (
     <form onSubmit={handleInternalSubmit} className={`flex flex-col gap-2 p-4 max-w-3xl mx-auto w-full`}>
-      <div className={`flex flex-row items-center justify-between text-white rounded-3xl rounded-bl-sm ${hasHistory ? "rounded-br-sm" : ""} break-words min-h-7 bg-neutral-700 px-4 pt-3 `}>
+      <div className="group relative rounded-2xl bg-white/5 backdrop-blur-md border border-white/10 focus-within:border-cyan-400 focus-within:ring-4 focus-within:ring-cyan-400/20 shadow-[0_10px_30px_rgba(0,0,0,0.35)] hover:shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition-all duration-300">
         <Textarea
           value={internalInputValue}
           onChange={(e) => setInternalInputValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleInternalSubmit(); } }}
           placeholder={showImageControls ? "Mô tả ảnh muốn tạo/sửa..." : "Nhập nội dung..."}
-          className={`w-full text-neutral-100 placeholder-neutral-500 resize-none border-0 focus:outline-none focus:ring-0 outline-none focus-visible:ring-0 shadow-none md:text-base  min-h-[56px] max-h-[200px]`}
+          className="w-full bg-transparent px-6 py-5 text-white placeholder-white/70 focus:outline-none caret-cyan-400 resize-none border-0 focus:ring-0 outline-none focus-visible:ring-0 shadow-none md:text-base min-h-[56px] max-h-[200px] rounded-2xl"
           rows={1}
         />
-        <div className="-mt-3">
+        <div className="absolute right-2 top-1/2 -translate-y-1/2">
           {isLoading ? (
-            <Button type="button" variant="ghost" size="icon" className="text-red-500 hover:text-red-400 hover:bg-red-500/10 p-2 cursor-pointer rounded-full transition-all duration-200" onClick={onCancel}>
+            <Button 
+              type="button" 
+              variant="ghost" 
+              size="icon" 
+              className="text-red-500 hover:text-red-400 hover:bg-red-500/10 p-2 cursor-pointer rounded-xl transition-all duration-200 active:scale-95" 
+              onClick={onCancel}
+            >
               <StopCircle className="h-5 w-5" />
             </Button>
           ) : (
-            <Button type="submit" variant="ghost" className={`${isSubmitDisabled ? "text-neutral-500" : "text-blue-500 hover:text-blue-400 hover:bg-blue-500/10"} p-2 cursor-pointer rounded-full transition-all duration-200 text-base`} disabled={isSubmitDisabled}>
-              Gửi
-              <ArrowUp className="h-5 w-5" />
+            <Button 
+              type="submit" 
+              className={`rounded-xl px-4 py-2 font-semibold shadow transition-all duration-200 active:scale-95 ${
+                isSubmitDisabled 
+                  ? "bg-white/10 text-white/50 cursor-not-allowed" 
+                  : "bg-gradient-to-br from-cyan-400 to-teal-500 text-slate-900 hover:shadow-cyan-500/25"
+              }`} 
+              disabled={isSubmitDisabled}
+            >
+              Gửi ↑
             </Button>
           )}
         </div>
       </div>
       <div className="flex items-center justify-between">
         <div className="flex flex-row gap-2">
-          {/* Tools dropdown unchanged */}
-          <div className="flex flex-row gap-2 bg-neutral-700 border-neutral-600 text-neutral-300 focus:ring-neutral-500 rounded-xl rounded-t-sm pl-2  max-w-[100%] sm:max-w-[90%]">
+          {/* Effort pill with glassmorphism */}
+          <div className="flex flex-row gap-2 bg-white/5 border border-white/10 text-white/80 rounded-full px-3 py-1.5">
             <div className="flex flex-row items-center text-sm">
               <Brain className="h-4 w-4 mr-2" />
               Effort
             </div>
             <Select value={effort} onValueChange={setEffort}>
-              <SelectTrigger className="w-[120px] bg-transparent border-none cursor-pointer">
+              <SelectTrigger className="w-[120px] bg-transparent border-none cursor-pointer text-white/80">
                 <SelectValue placeholder="Effort" />
               </SelectTrigger>
-              <SelectContent className="bg-neutral-700 border-neutral-600 text-neutral-300 cursor-pointer">
+              <SelectContent className="bg-white/10 backdrop-blur-md border border-white/20 text-white">
                 <SelectItem
                   value="low"
-                  className="hover:bg-neutral-600 focus:bg-neutral-600 cursor-pointer"
+                  className="hover:bg-white/20 focus:bg-white/20 cursor-pointer text-white"
                 >
                   Low
                 </SelectItem>
                 <SelectItem
                   value="medium"
-                  className="hover:bg-neutral-600 focus:bg-neutral-600 cursor-pointer"
+                  className="hover:bg-white/20 focus:bg-white/20 cursor-pointer text-white"
                 >
                   Medium
                 </SelectItem>
                 <SelectItem
                   value="high"
-                  className="hover:bg-neutral-600 focus:bg-neutral-600 cursor-pointer"
+                  className="hover:bg-white/20 focus:bg-white/20 cursor-pointer text-white"
                 >
                   High
                 </SelectItem>
@@ -566,7 +617,7 @@ export const InputForm: React.FC<InputFormProps> = ({
                   setRecentImageGenerated(false);
                   setLastGeneratedImageId(null);
                 }}
-                className="flex items-center justify-center w-8 h-8 p-0 bg-neutral-700 border-neutral-600 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-xl"
+                className="flex items-center justify-center w-8 h-8 p-0 bg-white/5 border border-white/10 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition-all duration-200"
                 title="Tắt chế độ tạo ảnh"
               >
                 <X className="w-3 h-3" />
@@ -578,45 +629,45 @@ export const InputForm: React.FC<InputFormProps> = ({
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
-                  className="flex items-center gap-2 px-3 py-1.5 h-8 text-xs bg-neutral-700 border-neutral-600 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-xl rounded-t-sm"
+                  className="flex items-center gap-2 px-3 py-1.5 h-8 text-xs bg-white/5 border border-white/10 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition-all duration-200"
                 >
                   <Wrench className="w-3 h-3" />
                   <span>Tools</span>
                   <ChevronDown className="w-3 h-3" />
                 </Button>
               </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-48 bg-neutral-700 border-neutral-600">
+            <DropdownMenuContent className="w-48 bg-white/10 backdrop-blur-md border border-white/20">
               <DropdownMenuItem
                 onClick={() => handleToolClick("word")}
-                className="flex items-center gap-2 px-3 py-2 text-neutral-300 hover:bg-neutral-600 cursor-pointer"
+                className="flex items-center gap-2 px-3 py-2 text-white hover:bg-white/20 cursor-pointer transition-colors"
               >
                 <PenTool className="w-4 h-4" />
                 <span>Soạn văn bản Word</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => handleToolClick("image")}
-                className="flex items-center gap-2 px-3 py-2 text-neutral-300 hover:bg-neutral-600 cursor-pointer"
+                className="flex items-center gap-2 px-3 py-2 text-white hover:bg-white/20 cursor-pointer transition-colors"
               >
                 <ImageIcon className="w-4 h-4" />
                 <span>Tạo ảnh</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => handleToolClick("video")}
-                className="flex items-center gap-2 px-3 py-2 text-neutral-300 hover:bg-neutral-600 cursor-pointer"
+                className="flex items-center gap-2 px-3 py-2 text-white hover:bg-white/20 cursor-pointer transition-colors"
               >
                 <Video className="w-4 h-4" />
                 <span>Tạo video</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => handleToolClick("marketing")}
-                className="flex items-center gap-2 px-3 py-2 text-neutral-300 hover:bg-neutral-600 cursor-pointer"
+                className="flex items-center gap-2 px-3 py-2 text-white hover:bg-white/20 cursor-pointer transition-colors"
               >
                 <Wand2 className="w-4 h-4" />
                 <span>Viết bài marketing</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => handleToolClick("website")}
-                className="flex items-center gap-2 px-3 py-2 text-neutral-300 hover:bg-neutral-600 cursor-pointer"
+                className="flex items-center gap-2 px-3 py-2 text-white hover:bg-white/20 cursor-pointer transition-colors"
               >
                 <Globe className="w-4 h-4" />
                 <span>Tạo website</span>
@@ -630,26 +681,26 @@ export const InputForm: React.FC<InputFormProps> = ({
               <Button
                 type="button"
                 variant="outline"
-                className="flex items-center gap-2 px-3 py-1.5 h-8 text-xs bg-neutral-700 border-neutral-600 text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-xl rounded-t-sm"
+                className="flex items-center gap-2 px-3 py-1.5 h-8 text-xs bg-white/5 border border-white/10 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition-all duration-200"
                 onClick={() => document.getElementById('image-file-input')?.click()}
               >
                 <Paperclip className="w-3 h-3" />
                 <span>Đính kèm ảnh</span>
               </Button>
-              <div className="flex items-center gap-1 px-2 h-8 text-xs bg-neutral-700 border-neutral-600 text-neutral-300 rounded-xl rounded-t-sm">
+              <div className="flex items-center gap-1 px-2 h-8 text-xs bg-white/5 border border-white/10 text-white/80 rounded-full">
                 <span>Tỉ lệ</span>
                 <Select value={aspectRatio} onValueChange={setAspectRatio}>
-                  <SelectTrigger className="w-[90px] bg-transparent border-none h-8">
+                  <SelectTrigger className="w-[90px] bg-transparent border-none h-8 text-white">
                     <SelectValue placeholder="1:1" />
                   </SelectTrigger>
-                  <SelectContent className="bg-neutral-700 border-neutral-600">
-                    <SelectItem value="1:1">1:1</SelectItem>
-                    <SelectItem value="16:9">16:9</SelectItem>
-                    <SelectItem value="9:16">9:16</SelectItem>
-                    <SelectItem value="4:3">4:3</SelectItem>
-                    <SelectItem value="3:4">3:4</SelectItem>
-                    <SelectItem value="2:3">2:3</SelectItem>
-                    <SelectItem value="3:2">3:2</SelectItem>
+                  <SelectContent className="bg-white/10 backdrop-blur-md border border-white/20">
+                    <SelectItem value="1:1" className="text-white hover:bg-white/20">1:1</SelectItem>
+                    <SelectItem value="16:9" className="text-white hover:bg-white/20">16:9</SelectItem>
+                    <SelectItem value="9:16" className="text-white hover:bg-white/20">9:16</SelectItem>
+                    <SelectItem value="4:3" className="text-white hover:bg-white/20">4:3</SelectItem>
+                    <SelectItem value="3:4" className="text-white hover:bg-white/20">3:4</SelectItem>
+                    <SelectItem value="2:3" className="text-white hover:bg-white/20">2:3</SelectItem>
+                    <SelectItem value="3:2" className="text-white hover:bg-white/20">3:2</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -657,7 +708,7 @@ export const InputForm: React.FC<InputFormProps> = ({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="flex items-center gap-1 px-2 h-8 text-xs text-neutral-300 hover:text-white hover:bg-neutral-600 rounded-xl rounded-t-sm"
+                  className="flex items-center gap-1 px-2 h-8 text-xs text-white/80 hover:text-white hover:bg-white/10 rounded-full transition-all duration-200"
                   onClick={() => setAttachmentFile(null)}
                 >
                   <X className="w-3 h-3" />
@@ -669,7 +720,7 @@ export const InputForm: React.FC<InputFormProps> = ({
         </div>
         {hasHistory && (
           <Button
-            className="bg-neutral-700 border-neutral-600 text-neutral-300 cursor-pointer rounded-xl rounded-t-sm pl-2 "
+            className="bg-white/5 border border-white/10 text-white/80 hover:text-white hover:bg-white/10 cursor-pointer rounded-full pl-2 transition-all duration-200"
             variant="default"
             onClick={() => window.location.reload()}
           >

@@ -48,7 +48,7 @@ def _extract_image_and_text(response: types.GenerateContentResponse):
 
 
 @router.post("/generate")
-def generate_image(payload: GenerateRequest):
+async def generate_image(payload: GenerateRequest):
     """Generate an image from a descriptive prompt using Gemini 2.5 Flash Image."""
     global _last_image_bytes, _last_mime_type
 
@@ -64,7 +64,10 @@ def generate_image(payload: GenerateRequest):
         config["image_config"] = {"aspect_ratio": payload.aspect_ratio}
 
     try:
-        response = client.models.generate_content(
+        import asyncio
+        # Use asyncio.to_thread to avoid blocking the event loop
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model="gemini-2.5-flash-image",
             contents=prompt,
             config=config,
@@ -129,7 +132,10 @@ async def edit_image(
         config["image_config"] = {"aspect_ratio": aspect_ratio}
 
     try:
-        response = client.models.generate_content(
+        import asyncio
+        # Use asyncio.to_thread to avoid blocking the event loop
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model="gemini-2.5-flash-image",
             contents=[prompt, image_part],
             config=config,

@@ -9,6 +9,7 @@ interface WelcomeScreenProps {
   isLoading: boolean;
   onImageStart?: (imageData: { id: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
   onImageGenerated?: (imageData: { id: string; dataUrl: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  onError?: (errorMessage: string) => void;
   // NEW: controlled input mode from App
   mode?: "chat" | "image";
   onModeChange?: (mode: "chat" | "image") => void;
@@ -23,6 +24,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   isLoading,
   onImageStart,
   onImageGenerated,
+  onError,
   mode,
   onModeChange,
   recentPreview,
@@ -45,6 +47,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           hasHistory={false}
           onImageStart={onImageStart}
           onImageGenerated={onImageGenerated}
+          onError={onError}
           mode={mode}
           onModeChange={onModeChange}
           recentPreview={recentPreview}

@@ -105,6 +105,9 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     Returns:
         Dictionary with state update, including sources_gathered, research_loop_count, and web_research_results
     """
+    import time
+    from google.api_core import exceptions as google_exceptions
+    
     # Configure
     configurable = Configuration.from_runnable_config(config)
     formatted_prompt = web_searcher_instructions.format(
@@ -112,30 +115,75 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
         research_topic=state["search_query"],
     )
 
-    # Uses the google genai client as the langchain client doesn't return grounding metadata
-    response = genai_client.models.generate_content(
-        model=configurable.query_generator_model,
-        contents=formatted_prompt,
-        config={
-            "tools": [{"google_search": {}}],
-            "temperature": 0,
-        },
-    )
-    # resolve the urls to short urls for saving tokens and time
-    resolved_urls = resolve_urls(
-        response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
-    )
-    # Gets the citations and adds them to the generated text
-    citations = get_citations(response, resolved_urls)
-    modified_text = insert_citation_markers(response.text, citations)
-    sources_gathered = [item for citation in citations for item in citation["segments"]]
+    # Retry logic with exponential backoff for Google Search API
+    max_retries = 3
+    base_delay = 1.0
+    
+    for attempt in range(max_retries):
+        try:
+            # Uses the google genai client as the langchain client doesn't return grounding metadata
+            response = genai_client.models.generate_content(
+                model=configurable.query_generator_model,
+                contents=formatted_prompt,
+                config={
+                    "tools": [{"google_search": {}}],
+                    "temperature": 0,
+                },
+            )
+            
+            # Check if response has grounding metadata
+            if not response.candidates or not response.candidates[0].grounding_metadata:
+                print(f"Warning: No grounding metadata found for query: {state['search_query']}")
+                return {
+                    "web_research": {"sources_gathered": []},
+                    "sources_gathered": [],
+                    "search_query": [state["search_query"]],
+                    "web_research_result": [response.text if response.text else "No results found"],
+                }
+            
+            # resolve the urls to short urls for saving tokens and time
+            resolved_urls = resolve_urls(
+                response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
+            )
+            # Gets the citations and adds them to the generated text
+            citations = get_citations(response, resolved_urls)
+            modified_text = insert_citation_markers(response.text, citations)
+            sources_gathered = [item for citation in citations for item in citation["segments"]]
 
-    return {
-        "web_research": {"sources_gathered": sources_gathered},
-        "sources_gathered": sources_gathered,
-        "search_query": [state["search_query"]],
-        "web_research_result": [modified_text],
-    }
+            return {
+                "web_research": {"sources_gathered": sources_gathered},
+                "sources_gathered": sources_gathered,
+                "search_query": [state["search_query"]],
+                "web_research_result": [modified_text],
+            }
+            
+        except (google_exceptions.DeadlineExceeded, google_exceptions.ServiceUnavailable, 
+                google_exceptions.InternalServerError, ConnectionError, TimeoutError) as e:
+            print(f"Google Search API timeout/error (attempt {attempt + 1}/{max_retries}): {e}")
+            
+            if attempt < max_retries - 1:
+                # Exponential backoff
+                delay = base_delay * (2 ** attempt)
+                print(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+                continue
+            else:
+                # Final attempt failed, return empty results
+                print(f"All retry attempts failed for query: {state['search_query']}")
+                return {
+                    "web_research": {"sources_gathered": []},
+                    "sources_gathered": [],
+                    "search_query": [state["search_query"]],
+                    "web_research_result": [f"Search failed after {max_retries} attempts. Please try again."],
+                }
+        except Exception as e:
+            print(f"Unexpected error in web_research: {e}")
+            return {
+                "web_research": {"sources_gathered": []},
+                "sources_gathered": [],
+                "search_query": [state["search_query"]],
+                "web_research_result": [f"Search error: {str(e)}"],
+            }
 
 
 def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
@@ -391,8 +439,25 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         temperature=0,
         max_retries=2,
         api_key=os.getenv("GEMINI_API_KEY"),
+        streaming=True,  # Enable streaming for final response
     )
-    result = llm.invoke(formatted_prompt)
+    
+    # Use streaming for final response
+    result_content = ""
+    try:
+        for chunk in llm.stream(formatted_prompt):
+            if hasattr(chunk, 'content') and chunk.content:
+                result_content += chunk.content
+                # Yield intermediate streaming results
+                yield {
+                    "finalize_answer": {"status": "streaming", "content": chunk.content},
+                    "messages": [AIMessage(content=result_content)],
+                }
+    except Exception as e:
+        print(f"Streaming error in finalize_answer: {e}")
+        # Fallback to non-streaming if streaming fails
+        result = llm.invoke(formatted_prompt)
+        result_content = result.content
 
     # Replace the short urls with the original urls and dedupe sources
     unique_sources = []
@@ -400,8 +465,8 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     for source in state.get("sources_gathered", []) or []:
         short_url = source.get("short_url")
         original = source.get("value") or source.get("url") or source.get("link")
-        if short_url and original and short_url in result.content:
-            result.content = result.content.replace(short_url, original)
+        if short_url and original and short_url in result_content:
+            result_content = result_content.replace(short_url, original)
         if original and original not in seen_values:
             seen_values.add(original)
             unique_sources.append(source)
@@ -415,11 +480,12 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
             if url:
                 refs_lines.append(f"- [{label}]({url})")
         if refs_lines:
-            result.content = result.content.strip() + "\n\nNguồn tham khảo:\n" + "\n".join(refs_lines)
+            result_content = result_content.strip() + "\n\nNguồn tham khảo:\n" + "\n".join(refs_lines)
 
-    return {
+    # Final yield with complete content
+    yield {
         "finalize_answer": {"status": "done"},
-        "messages": [AIMessage(content=result.content)],
+        "messages": [AIMessage(content=result_content)],
         "sources_gathered": unique_sources,
     }
 
@@ -429,34 +495,82 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
 def route_mode(state: OverallState, config: RunnableConfig):
     """Auto router giữa web search và trả lời trực tiếp bằng LLM.
 
-    Nếu câu hỏi có tính thời sự/thời gian thực (ví dụ: "hôm nay là ngày gì"), bắt buộc dùng web search.
+    Nếu câu hỏi có tính thời sự/thời gian thực hoặc về thông tin mới, bắt buộc dùng web search.
     Ngược lại, nếu là trò chuyện thông thường, dùng LLM trực tiếp.
     """
     q = (get_research_topic(state["messages"]) or "").lower().strip()
 
     # Các từ khóa nhận diện câu hỏi thời gian thực hoặc phụ thuộc dữ liệu cập nhật
     time_keywords = [
-        "hôm nay", "today", "hiện tại", "bây giờ", "mới nhất",
-        "tuần này", "tháng này", "năm nay",
+        "hôm nay", "today", "hiện tại", "bây giờ", "mới nhất", "latest",
+        "tuần này", "tháng này", "năm nay", "this week", "this month", "this year",
         "lịch", "calendar", "ngày", "ngày gì", "holiday", "lễ",
-        "event", "festival", "sự kiện", "đang diễn ra",
+        "event", "festival", "sự kiện", "đang diễn ra", "happening",
         "thời tiết", "weather", "giá", "price", "cổ phiếu", "stock", "tỷ giá", "exchange rate",
-        "ở việt nam", "tại việt nam", "vn"
+        "ở việt nam", "tại việt nam", "vn", "in vietnam"
     ]
     if any(k in q for k in time_keywords):
         return "generate_query"
 
-    # Từ khóa tri thức/hỏi đáp phổ biến -> ưu tiên tìm kiếm
-    keywords = [
-        "tin", "news", "ai là", "what", "when", "where", "who",
-        "định nghĩa", "nguồn", "website", "so sánh",
+    # Từ khóa về công nghệ mới, sản phẩm mới, thông tin cập nhật
+    new_tech_keywords = [
+        "mới", "new", "ra mắt", "launch", "phát hành", "release", "công bố", "announce",
+        "cập nhật", "update", "phiên bản", "version", "beta", "alpha",
+        "agentkit", "gpt-5", "gpt 5", "claude", "gemini", "chatgpt", "openai",
+        "ai mới", "new ai", "model mới", "new model", "công nghệ mới", "new technology",
+        "startup", "unicorn", "ipo", "funding", "đầu tư", "investment",
+        "breakthrough", "đột phá", "innovation", "sáng tạo"
     ]
-    if any(k in q for k in keywords):
+    if any(k in q for k in new_tech_keywords):
+        return "generate_query"
+
+    # Từ khóa tri thức/hỏi đáp phổ biến -> ưu tiên tìm kiếm
+    knowledge_keywords = [
+        "tin", "news", "ai là", "what", "when", "where", "who", "how",
+        "định nghĩa", "define", "nguồn", "source", "website", "so sánh", "compare",
+        "thông tin", "information", "chi tiết", "details", "giải thích", "explain",
+        "tìm hiểu", "learn", "research", "nghiên cứu"
+    ]
+    if any(k in q for k in knowledge_keywords):
         return "generate_query"
 
     # Nếu có chỉ dấu năm/thời điểm cụ thể -> ưu tiên search
     import re
     if re.search(r"\b20\d{2}\b", q) or re.search(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", q):
+        return "generate_query"
+
+    # Phát hiện tên công ty, sản phẩm công nghệ nổi tiếng
+    tech_entities = [
+        "openai", "google", "microsoft", "apple", "meta", "facebook", "amazon", "tesla",
+        "nvidia", "anthropic", "deepmind", "hugging face", "stability ai",
+        "chatgpt", "claude", "gemini", "bard", "copilot", "midjourney", "dall-e",
+        "github", "stackoverflow", "reddit", "twitter", "x.com", "linkedin"
+    ]
+    if any(entity in q for entity in tech_entities):
+        return "generate_query"
+
+    # Phát hiện các câu hỏi có thể chứa thông tin lỗi thời
+    # Nếu câu hỏi đề cập đến số liệu, thống kê, hoặc thông tin có thể thay đổi
+    outdated_indicators = [
+        "bao nhiêu", "how many", "số lượng", "count", "thống kê", "statistics",
+        "tỷ lệ", "rate", "percentage", "phần trăm", "top", "ranking", "xếp hạng",
+        "danh sách", "list", "best", "tốt nhất", "worst", "tệ nhất",
+        "popular", "phổ biến", "trending", "xu hướng", "market share", "thị phần"
+    ]
+    if any(indicator in q for indicator in outdated_indicators):
+        return "generate_query"
+
+    # Phát hiện câu hỏi về sự kiện, tin tức, hoặc thông tin có thể thay đổi
+    event_indicators = [
+        "có gì", "what's", "diễn ra", "happening", "xảy ra", "occur",
+        "tình hình", "situation", "status", "trạng thái", "hiện trạng",
+        "vấn đề", "issue", "problem", "crisis", "khủng hoảng"
+    ]
+    if any(indicator in q for indicator in event_indicators):
+        return "generate_query"
+
+    # Nếu câu hỏi ngắn và có thể là factual question
+    if len(q.split()) <= 10 and any(word in q for word in ["là", "is", "are", "was", "were", "có", "have", "has"]):
         return "generate_query"
 
     return "llm"

@@ -91,21 +91,7 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
     }
   ]);
 
-  const formatTime = (date: Date) => {
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-    if (diffMins < 60) {
-      return `${diffMins} phút trước`;
-    } else if (diffHours < 24) {
-      return `${diffHours} giờ trước`;
-    } else {
-      return `${diffDays} ngày trước`;
-    }
-  };
 
   const handleRename = (sessionId: string, currentTitle: string) => {
     setEditingId(sessionId);
@@ -182,7 +168,7 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
         <div className="p-4">
           <Button
             onClick={onNewChat}
-            className="w-full bg-white hover:bg-gray-100 text-black border border-gray-300 font-medium"
+            className="w-full bg-gradient-to-br from-cyan-400 to-teal-500 hover:from-cyan-500 hover:to-teal-600 text-slate-900 font-semibold border-none shadow-lg hover:shadow-cyan-500/25 active:scale-95 transition-all duration-200"
           >
             Cuộc trò chuyện mới
           </Button>

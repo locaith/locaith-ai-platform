@@ -3,12 +3,13 @@ import type { Message } from "@langchain/langgraph-sdk";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ProcessedEvent } from "@/components/ActivityTimeline";
 import { WelcomeScreen } from "@/components/WelcomeScreen";
-import { ChatMessagesView } from "@/components/ChatMessagesView";
+import ChatMessagesView from "@/components/ChatMessagesView";
 import { Button } from "@/components/ui/button";
 
 import { RightPanel } from "@/components/RightPanel";
 import Layout from "@/components/Layout";
 import { safeInvokeEdgeFunction } from "@/lib/supabaseClient";
+import { ResearchHistory } from "@/components/ResearchHistory";
 
 export default function App() {
   const [processedEventsTimeline, setProcessedEventsTimeline] = useState<
@@ -17,6 +18,12 @@ export default function App() {
   const [historicalActivities, setHistoricalActivities] = useState<
     Record<string, ProcessedEvent[]>
   >({});
+  // NEW: Persistent research storage
+  const [persistentResearch, setPersistentResearch] = useState<
+    Record<string, ProcessedEvent[]>
+  >({});
+  const [currentSessionId, setCurrentSessionId] = useState<string>("");
+  
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const hasFinalizeEventOccurredRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,11 +51,76 @@ export default function App() {
     }
   };
 
+  // Persistent research utilities
+  const saveResearchToStorage = (sessionId: string, events: ProcessedEvent[]) => {
+    try {
+      const existingData = JSON.parse(localStorage.getItem('locaith-research') || '{}');
+      existingData[sessionId] = events;
+      localStorage.setItem('locaith-research', JSON.stringify(existingData));
+      setPersistentResearch(existingData);
+    } catch (error) {
+      console.warn('Failed to save research to localStorage:', error);
+    }
+  };
+
+  const loadResearchFromStorage = () => {
+    try {
+      const data = JSON.parse(localStorage.getItem('locaith-research') || '{}');
+      setPersistentResearch(data);
+      return data;
+    } catch (error) {
+      console.warn('Failed to load research from localStorage:', error);
+      return {};
+    }
+  };
+
+  const generateSessionId = () => {
+    return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  };
+
+  const restoreResearch = (sessionId: string, events: ProcessedEvent[]) => {
+    // Save current research if exists
+    if (processedEventsTimeline.length > 0 && currentSessionId) {
+      saveResearchToStorage(currentSessionId, processedEventsTimeline);
+    }
+    
+    // Restore the selected research
+    setCurrentSessionId(sessionId);
+    setProcessedEventsTimeline(events);
+    setRightPanelKey((prev) => prev + 1); // Force refresh RightPanel
+  };
+
+  const deleteResearch = (sessionId: string) => {
+    try {
+      const existingData = JSON.parse(localStorage.getItem('locaith-research') || '{}');
+      delete existingData[sessionId];
+      localStorage.setItem('locaith-research', JSON.stringify(existingData));
+      setPersistentResearch(existingData);
+    } catch (error) {
+      console.warn('Failed to delete research from localStorage:', error);
+    }
+  };
+
   // Retry/backoff state for stream stability
   const lastPayloadRef = useRef<any>(null);
   const retryAttemptRef = useRef(0);
   const retryTimerRef = useRef<number | undefined>(undefined);
   const MAX_RETRIES = 3;
+
+  // Load persistent research on mount
+  useEffect(() => {
+    loadResearchFromStorage();
+    if (!currentSessionId) {
+      setCurrentSessionId(generateSessionId());
+    }
+  }, []);
+
+  // Auto-save research when processedEventsTimeline changes
+  useEffect(() => {
+    if (processedEventsTimeline.length > 0 && currentSessionId) {
+      saveResearchToStorage(currentSessionId, processedEventsTimeline);
+    }
+  }, [processedEventsTimeline, currentSessionId]);
 
   const thread = useStream<{
     messages: Message[];
@@ -140,35 +212,55 @@ export default function App() {
         msg.includes("ECONNREFUSED") ||
         msg.includes("ENOTFOUND") ||
         msg.includes("timeout") ||
+        msg.includes("ConnectTimeout") ||
+        msg.includes("WinError 10060") ||
+        msg.includes("connection attempt failed") ||
         msg.includes("502") ||
         msg.includes("503") ||
         msg.includes("504");
         
+      const isBackendError = 
+        msg.includes("ConnectTimeout") ||
+        msg.includes("Google Search API") ||
+        msg.includes("Search failed") ||
+        msg.includes("web_research");
+        
+      // Silently ignore abort errors - they're normal during streaming
       if (isAbort) {
-        console.info("Stream aborted/restarted (ignored):", msg);
-        return; // don't surface aborts
+        console.info("Stream connection reset (normal):", msg);
+        return;
       }
       
+      if (isBackendError) {
+        console.warn("Backend service error:", msg);
+        setError("Dịch vụ tìm kiếm tạm thời gặp sự cố. Vui lòng thử lại sau ít phút.");
+        return;
+      }
+      
+      // Simplified retry logic - only for genuine network issues
       if (isNetworkError) {
-        console.warn("Network error, will retry with backoff:", msg);
-        // schedule exponential backoff retry
-        if (retryTimerRef.current) {
-          clearTimeout(retryTimerRef.current);
-          retryTimerRef.current = undefined;
-        }
+        console.warn("Network error detected:", msg);
         const attempt = retryAttemptRef.current;
         if (attempt < MAX_RETRIES) {
-          const delay = Math.min(8000, 500 * Math.pow(2, attempt));
-          console.info(`[stream] retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          // Clear any existing timer
+          if (retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = undefined;
+          }
+          
+          // Simple retry with fixed delay
+          const delay = 2000; // Fixed 2 second delay
+          console.info(`Retrying connection in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          
           retryTimerRef.current = window.setTimeout(() => {
-            try { thread.stop(); } catch {}
             if (lastPayloadRef.current) {
-              try { thread.submit(lastPayloadRef.current); } catch (e) {
-                console.warn("Immediate resubmit failed", e);
-              }
+              retryAttemptRef.current = attempt + 1;
+              thread.submit(lastPayloadRef.current);
             }
-            retryAttemptRef.current = attempt + 1;
           }, delay);
+        } else {
+          setError("Kết nối không ổn định. Vui lòng kiểm tra mạng và thử lại.");
+          retryAttemptRef.current = 0; // Reset for next attempt
         }
         return;
       }
@@ -263,6 +355,15 @@ export default function App() {
     (submittedInputValue: string, effort: string) => {
       if (!submittedInputValue.trim()) return;
       
+      // Save current research before starting new one
+      if (processedEventsTimeline.length > 0 && currentSessionId) {
+        saveResearchToStorage(currentSessionId, processedEventsTimeline);
+      }
+
+      // Create new session for new research
+      const newSessionId = generateSessionId();
+      setCurrentSessionId(newSessionId);
+      
       // Reset tất cả state liên quan để tránh nhấp nháy và trùng lặp
       setProcessedEventsTimeline([]);
       setError(null);
@@ -292,7 +393,19 @@ export default function App() {
           break;
       }
 
-      // Reset hoàn toàn chat history để tránh trộn lẫn với tin nhắn cũ
+      // Reset hoàn toàn state trước khi gửi tin nhắn mới
+      setProcessedEventsTimeline([]);
+      setError(null);
+      setRightPanelKey(prev => prev + 1); // Force reset RightPanel
+      hasFinalizeEventOccurredRef.current = false;
+      
+      // Reset word preview state
+      setWordPreviewActive(false);
+      setWordDocument(null);
+      setWordError(null);
+      setWordIsGenerating(false);
+      
+      // Tạo tin nhắn mới hoàn toàn
       const newMessages: Message[] = [
         {
           type: "human",
@@ -338,9 +451,37 @@ export default function App() {
     }
   }, [thread]);
 
+  const handleError = useCallback((errorMessage: string) => {
+    // Add error message as AI response to chat
+    const errorAiMessage: Message = {
+      type: "ai",
+      content: errorMessage,
+      id: `error_${Date.now()}`,
+    };
+    
+    // Add the error message to the thread
+    if (thread.messages) {
+      thread.messages.push(errorAiMessage);
+    }
+    
+    // Trigger a re-render by updating hasEverHadMessages
+    setHasEverHadMessages(true);
+  }, [thread]);
+
   const handleNewChat = useCallback(() => {
+    // Save current research before resetting
+    if (processedEventsTimeline.length > 0 && currentSessionId) {
+      saveResearchToStorage(currentSessionId, processedEventsTimeline);
+    }
+
     // Reset hoàn toàn tất cả state
     thread.stop();
+    
+    // Create new session for new chat
+    const newSessionId = generateSessionId();
+    setCurrentSessionId(newSessionId);
+    
+    // Clear tất cả state liên quan đến chat
     setProcessedEventsTimeline([]);
     setError(null);
     setRightPanelKey(prev => prev + 1); // Force reset RightPanel
@@ -362,11 +503,19 @@ export default function App() {
       retryTimerRef.current = undefined;
     }
     
-    // Clear thread messages
-    thread.clear();
+    // Clear thread messages hoàn toàn
+    if (thread.messages) {
+      thread.messages.length = 0;
+    }
     
-    console.log('Chat reset completely');
-  }, [thread]);
+    // Force tạo thread ID mới để tránh cache cũ
+    // Trigger một event để các components khác biết cần reset
+    window.dispatchEvent(new CustomEvent('chatReset', { 
+      detail: { timestamp: Date.now() } 
+    }));
+    
+    console.log('Chat reset completely with new session');
+  }, [thread, processedEventsTimeline, currentSessionId, saveResearchToStorage, generateSessionId]);
 
 
 
@@ -377,21 +526,26 @@ export default function App() {
     return t.includes("generating search queries") || t.includes("web research");
   });
 
-  // Gom và ẩn bubble AI khi đang stream để tránh nhấp nháy
+  // Smooth message compression để tránh UI jumping
   const compressMessages = useCallback((messages: Message[]): Message[] => {
     const out: Message[] = [];
     for (const m of messages) {
       const last = out[out.length - 1];
       if (last && last.type === "ai" && m.type === "ai") {
-        const lastContent =
-          typeof last.content === "string"
-            ? last.content
-            : JSON.stringify(last.content);
+        // Smooth content merging - chỉ thay thế thay vì join để tránh jumping
         const curContent =
           typeof m.content === "string"
             ? m.content
             : JSON.stringify(m.content);
-        last.content = [lastContent, curContent].filter(Boolean).join("\n\n");
+        
+        // Nếu content mới dài hơn, sử dụng content mới (streaming update)
+        // Nếu content mới ngắn hơn, giữ content cũ (tránh flicker)
+        if (curContent && curContent.length > 0) {
+          const lastContent = typeof last.content === "string" ? last.content : "";
+          if (curContent.length >= lastContent.length || !lastContent) {
+            last.content = curContent;
+          }
+        }
         last.id = m.id || last.id;
       } else {
         out.push({ ...m });
@@ -408,9 +562,20 @@ export default function App() {
     isEdit: boolean;
     originalFile?: File;
   }) => {
+    const timestamp = Date.now();
+    
+    console.log('[handleImageStart] Creating image messages:', {
+      id: start.id,
+      timestamp: timestamp,
+      timestampDate: new Date(timestamp).toLocaleString(),
+      isEdit: start.isEdit,
+      prompt: start.prompt
+    });
+    
     const userMessage: Message = {
       id: `user-img-${start.id}`,
       type: "human",
+      timestamp: timestamp,
       content: start.isEdit
         ? `Chỉnh sửa ảnh: ${start.prompt}`
         : `Tạo ảnh: ${start.prompt}`,
@@ -419,6 +584,7 @@ export default function App() {
     const aiPlaceholder: Message = {
       id: `ai-img-pending-${start.id}`,
       type: "ai",
+      timestamp: timestamp + 1, // Slightly later than user message
       content: `Tôi sẽ tạo ảnh giúp bạn...
 
 • Prompt: ${start.prompt}
@@ -426,6 +592,11 @@ export default function App() {
 
 Đang tạo ảnh...`,
     };
+
+    console.log('[handleImageStart] Created messages with timestamps:', {
+      userMessage: { id: userMessage.id, timestamp: userMessage.timestamp },
+      aiPlaceholder: { id: aiPlaceholder.id, timestamp: aiPlaceholder.timestamp }
+    });
 
     setImageMessages(prev => [...prev, userMessage, aiPlaceholder]);
     // Ensure the input stays in image mode after starting an image task
@@ -441,8 +612,19 @@ export default function App() {
     isEdit: boolean;
     originalFile?: File;
   }) => {
+    console.log('[handleImageGenerated] Processing image:', {
+      id: imageData.id,
+      isEdit: imageData.isEdit,
+      prompt: imageData.prompt
+    });
+    
     setImageMessages(prev => prev.map(m => {
       if (m.id === `ai-img-pending-${imageData.id}`) {
+        console.log('[handleImageGenerated] Found placeholder message:', {
+          id: m.id,
+          originalTimestamp: m.timestamp,
+          timestampDate: m.timestamp ? new Date(m.timestamp).toLocaleString() : 'No timestamp'
+        });
         const raw = (imageData.dataUrl || "").trim();
         if (!raw) {
           console.warn('[App] imageData.dataUrl is empty, replacing with text message');
@@ -455,11 +637,22 @@ export default function App() {
         const finalUrl = raw.startsWith("data:") || raw.startsWith("http")
           ? raw
           : `data:image/png;base64,${raw}`;
-        return {
+        
+        const finalMessage = {
           ...m,
           id: `ai-img-${imageData.id}`,
+          // Keep the original timestamp from placeholder, don't create new one
           content: `![Generated Image](${finalUrl})\n\n**Prompt:** ${imageData.prompt}  \n**Aspect Ratio:** ${imageData.aspectRatio}  \n**Type:** ${imageData.isEdit ? 'Image Edit' : 'Image Generation'}`,
         };
+        
+        console.log('[handleImageGenerated] Created final message:', {
+          id: finalMessage.id,
+          timestamp: finalMessage.timestamp,
+          timestampDate: finalMessage.timestamp ? new Date(finalMessage.timestamp).toLocaleString() : 'No timestamp',
+          isEdit: imageData.isEdit
+        });
+        
+        return finalMessage;
       }
       return m;
     }));
@@ -515,38 +708,95 @@ export default function App() {
     }
   }, [stableMessages.length]);
 
-  // Get the most recent image URL from imageMessages for editing
+  // Get the most recent image URL from all messages for editing
   const getRecentImageUrl = useCallback(() => {
-    // Find the most recent AI image message
-    const aiImageMessages = imageMessages
-      .filter(msg => msg.type === "ai" && msg.id?.startsWith("ai-img-") && msg.content)
-      .sort((a, b) => {
-        // Sort by timestamp (extracted from ID)
-        const getTs = (id?: string) => {
-          if (!id) return 0;
-          const parts = id.split('-');
-          const last = parts[parts.length - 1];
-          const num = parseInt(last);
-          return isNaN(num) ? 0 : num;
-        };
-        return getTs(b.id) - getTs(a.id); // Most recent first
+    console.log('[getRecentImageUrl] === DEBUGGING IMAGE SEARCH ===');
+    console.log('[getRecentImageUrl] imageMessages count:', imageMessages.length);
+    console.log('[getRecentImageUrl] thread.messages count:', thread.messages?.length || 0);
+
+    // Combine all messages from both sources
+    const allMessages = [
+      ...(thread.messages || []),
+      ...imageMessages
+    ];
+
+    console.log('[getRecentImageUrl] Total combined messages:', allMessages.length);
+
+    // Find all AI messages with images and their timestamps
+    const imageMessagesWithTime: Array<{ msg: any; timestamp: number; url: string; source: string }> = [];
+
+    allMessages.forEach((msg, index) => {
+      if (msg.type === "ai" && msg.content) {
+        const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+        const imageUrlMatch = content.match(/!\[.*?\]\((.*?)\)/);
+        
+        if (imageUrlMatch && imageUrlMatch[1]) {
+          let timestamp = Date.now();
+          let source = 'unknown';
+          
+          // Determine source
+          if (imageMessages.includes(msg)) {
+            source = 'imageMessages';
+          } else if (thread.messages?.includes(msg)) {
+            source = 'thread.messages';
+          }
+          
+          // Try to extract timestamp from ID
+          if (msg.id?.startsWith("ai-img-")) {
+            const parts = msg.id.split('-');
+            const last = parts[parts.length - 1];
+            const num = parseInt(last);
+            if (!isNaN(num)) {
+              timestamp = num;
+            }
+          } else if (msg.timestamp) {
+            timestamp = msg.timestamp;
+          }
+          
+          console.log('[getRecentImageUrl] Found image message:', {
+            messageId: msg.id,
+            timestamp: timestamp,
+            timestampDate: new Date(timestamp).toLocaleString(),
+            url: imageUrlMatch[1].substring(0, 50) + '...',
+            source: source,
+            index: index
+          });
+          
+          imageMessagesWithTime.push({
+            msg,
+            timestamp,
+            url: imageUrlMatch[1],
+            source
+          });
+        }
+      }
+    });
+
+    console.log('[getRecentImageUrl] Found', imageMessagesWithTime.length, 'image messages total');
+
+    // Sort by timestamp (most recent first)
+    imageMessagesWithTime.sort((a, b) => b.timestamp - a.timestamp);
+
+    console.log('[getRecentImageUrl] After sorting by timestamp:');
+    imageMessagesWithTime.forEach((item, index) => {
+      console.log(`  ${index + 1}. ID: ${item.msg.id}, Timestamp: ${item.timestamp} (${new Date(item.timestamp).toLocaleString()}), Source: ${item.source}`);
+    });
+
+    if (imageMessagesWithTime.length > 0) {
+      const mostRecent = imageMessagesWithTime[0];
+      console.log('[getRecentImageUrl] ✅ Selected most recent image:', {
+        url: mostRecent.url.substring(0, 50) + '...',
+        timestamp: mostRecent.timestamp,
+        timestampDate: new Date(mostRecent.timestamp).toLocaleString(),
+        messageId: mostRecent.msg.id,
+        source: mostRecent.source
       });
-
-    if (aiImageMessages.length === 0) return null;
-
-    const mostRecentMessage = aiImageMessages[0];
-    const content = typeof mostRecentMessage.content === "string" 
-      ? mostRecentMessage.content 
-      : JSON.stringify(mostRecentMessage.content);
-
-    // Extract image URL from markdown content
-    const imageUrlMatch = content.match(/!\[.*?\]\((.*?)\)/);
-    if (imageUrlMatch && imageUrlMatch[1]) {
-      return imageUrlMatch[1];
+      return mostRecent.url;
     }
 
+    console.log('[getRecentImageUrl] No recent image found');
     return null;
-  }, [imageMessages]);
+  }, [imageMessages, thread.messages]);
 
   return (
     <Layout
@@ -561,6 +811,10 @@ export default function App() {
             wordDocument={wordDocument}
             wordIsGenerating={wordIsGenerating}
             wordError={wordError}
+            persistentResearch={persistentResearch}
+            currentSessionId={currentSessionId}
+            onRestoreResearch={restoreResearch}
+            onDeleteResearch={deleteResearch}
           />
         ) : null
      }
@@ -573,11 +827,13 @@ export default function App() {
             onCancel={handleCancel}
             onImageStart={handleImageStart}
             onImageGenerated={handleImageGenerated}
+            onError={handleError}
             // pass global input mode to InputForm in Welcome view
             mode={globalInputMode}
             onModeChange={setGlobalInputMode}
             // pass recent image for editing
             recentPreview={getRecentImageUrl()}
+            lastImageUrl={getRecentImageUrl()}
           />
         </div>
       ) : error ? (
@@ -608,11 +864,13 @@ export default function App() {
             historicalActivities={historicalActivities}
             onImageStart={handleImageStart}
             onImageGenerated={handleImageGenerated}
+            onError={handleError}
             // controlled input mode props
             inputMode={globalInputMode}
             onModeChange={setGlobalInputMode}
             // pass recent image for editing
             recentPreview={getRecentImageUrl()}
+            lastImageUrl={getRecentImageUrl()}
           />
         </div>
       )}

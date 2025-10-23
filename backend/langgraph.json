@@ -4,7 +4,9 @@
     "agent": "./src/agent/graph.py:graph"
   },
   "http": {
-    "app": "agent.app:app"
+    "app": "agent.app:app",
+    "timeout": 300,
+    "keep_alive_timeout": 180
   },
   "env": ".env"
 }

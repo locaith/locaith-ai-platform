@@ -1,10 +1,10 @@
 import React from "react";
 import type { Message } from "@langchain/langgraph-sdk";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, Copy, CopyCheck, Download } from "lucide-react";
+import { Loader2, Copy, CopyCheck } from "lucide-react";
 import { InputForm } from "@/components/InputForm";
 import { Button } from "@/components/ui/button";
-import { useState, ReactNode } from "react";
+import { useState, ReactNode, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -184,7 +184,7 @@ function HumanMessageBubble({
   mdComponents,
 }: HumanMessageBubbleProps) {
   return (
-    <div className="text-white rounded-3xl break-words min-h-7 bg-neutral-700 max-w-[100%] sm:max-w-[90%] px-4 pt-3 rounded-br-lg">
+    <div className="text-white/90 rounded-2xl break-words min-h-7 bg-white/10 backdrop-blur-sm border border-white/10 max-w-[75%] px-5 py-3 ml-auto">
       <ReactMarkdown components={mdComponents}>
         {typeof message.content === "string"
           ? message.content
@@ -237,20 +237,16 @@ function AiMessageBubble({
     isLastMessage && isOverallLoading ? liveActivity : historicalActivity;
   const isLiveActivityForThisBubble = isLastMessage && isOverallLoading;
 
-  // Gating: hide early English streaming to avoid flicker; show only when Vietnamese diacritics appear
-  // or when the stream has matured (length threshold / markdown structure) or loading completes.
+  // Show streaming content immediately for better user experience
   const rawContentStr =
     typeof message.content === "string"
       ? message.content
       : JSON.stringify(message.content);
   const contentStr = rawContentStr || "";
   const displayStr = stripSourcesSection(contentStr);
-  const hasVi = /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴĐ]/.test(
-    contentStr
-  );
-  const lenOk = contentStr.trim().length >= 80; // wait for enough tokens to reduce flicker
-  const hasStructure = /(\n-\s|\n\*\s|```|^#{1,6}\s|\n\d+\.\s)/m.test(contentStr);
-  const hideLiveEarly = isLastMessage && isOverallLoading && !(hasVi || lenOk || hasStructure);
+  
+  // Always show content immediately when streaming - no gating delays
+  const hideLiveEarly = false;
   const hasText = displayStr && displayStr.length > 0;
 
   return (
@@ -296,6 +292,7 @@ interface ChatMessagesViewProps {
   historicalActivities: Record<string, ProcessedEvent[]>;
   onImageStart?: (imageData: { id: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
   onImageGenerated?: (imageData: { id: string; dataUrl: string; prompt: string; aspectRatio: string; isEdit: boolean; originalFile?: File }) => void;
+  onError?: (errorMessage: string) => void;
   // NEW: controlled input mode from parent
   inputMode: "chat" | "image";
   onModeChange: (mode: "chat" | "image") => void;
@@ -304,7 +301,7 @@ interface ChatMessagesViewProps {
   lastImageUrl?: string | null;
 }
 
-export function ChatMessagesView({
+export default function ChatMessagesView({
   messages,
   isLoading,
   scrollAreaRef,
@@ -314,6 +311,7 @@ export function ChatMessagesView({
   historicalActivities,
   onImageStart,
   onImageGenerated,
+  onError,
   inputMode,
   onModeChange,
   recentPreview,
@@ -321,8 +319,65 @@ export function ChatMessagesView({
 }: ChatMessagesViewProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [modalImage, setModalImage] = useState<{ url: string; alt: string } | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastMessageCountRef = useRef(messages.length);
+  const isUserScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout>();
+  
   // REMOVED: local inputMode state; now controlled by parent
   // const [inputMode, setInputMode] = useState<"chat" | "image">("chat");
+
+  // Smooth auto-scroll behavior
+  useEffect(() => {
+    const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+      if (messagesEndRef.current && !isUserScrollingRef.current) {
+        messagesEndRef.current.scrollIntoView({ 
+          behavior, 
+          block: 'end',
+          inline: 'nearest'
+        });
+      }
+    };
+
+    // Scroll immediately for new messages
+    if (messages.length > lastMessageCountRef.current) {
+      scrollToBottom('smooth');
+      lastMessageCountRef.current = messages.length;
+    }
+    
+    // Scroll during streaming (when loading)
+    if (isLoading) {
+      scrollToBottom('smooth');
+    }
+  }, [messages, isLoading]);
+
+  // Track user scrolling to prevent auto-scroll interruption
+  useEffect(() => {
+    const handleScroll = () => {
+      isUserScrollingRef.current = true;
+      
+      // Clear existing timeout
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      
+      // Reset after user stops scrolling
+      scrollTimeoutRef.current = setTimeout(() => {
+        isUserScrollingRef.current = false;
+      }, 1000);
+    };
+
+    const scrollArea = scrollAreaRef.current;
+    if (scrollArea) {
+      scrollArea.addEventListener('scroll', handleScroll);
+      return () => {
+        scrollArea.removeEventListener('scroll', handleScroll);
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current);
+        }
+      };
+    }
+  }, [scrollAreaRef]);
 
   const handleCopy = async (text: string, messageId: string) => {
     try {
@@ -363,10 +418,7 @@ export function ChatMessagesView({
               const raw = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
               const imgMatch = raw.match(/!\[[^\]]*\]\((.*?)\)/);
               const imgUrl = imgMatch?.[1]?.trim() || "";
-              const metaText = imgUrl ? raw.replace(imgMatch![0], "").trim() : raw;
               // Extract prompt for suggestions but do not show raw meta
-              const promptMatch = metaText.match(/\*\*Prompt:\*\*\s*(.*)/i);
-              const promptForSuggest = promptMatch?.[1]?.trim() || "";
               const suggestions = [
                 "Bạn muốn đổi phong cách cho ảnh này không (điện ảnh, hoạt hình, tối giản)?",
                 "Có cần thay đổi tỉ lệ khung hình (16:9, 9:16, 4:3)?",
@@ -453,6 +505,8 @@ export function ChatMessagesView({
                 </div>
               </div>
             )}
+          {/* Invisible div for smooth scrolling */}
+          <div ref={messagesEndRef} />
         </div>
       </ScrollArea>
       <InputForm
@@ -464,6 +518,7 @@ export function ChatMessagesView({
         onModeChange={onModeChange}
         onImageStart={onImageStart}
         onImageGenerated={onImageGenerated}
+        onError={onError}
         recentPreview={recentPreview}
         lastImageUrl={lastImageUrl}
       />
